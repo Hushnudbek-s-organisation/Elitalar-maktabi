@@ -1,33 +1,30 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { 
-  LayoutDashboard, Users, Calendar, Award, Star, BookOpen, 
-  Clock, ShieldCheck, CheckCircle, LogOut, Settings, 
-  TableProperties, Send, AlertCircle, X, PlusCircle, Edit, ListTodo, DownloadCloud, MessageCircle, MoreVertical, Search, BellOff, Trash2, Ban, Copy, ChevronDown, Loader2, MessageSquare, FileText
+import { useState, useEffect, useCallback } from "react";
+import {
+  LayoutDashboard, Users, Calendar, Award, Star, BookOpen,
+  Clock, ShieldCheck, CheckCircle, LogOut, Settings,
+  TableProperties, Send, AlertCircle, X, PlusCircle, Edit, ListTodo, DownloadCloud, MessageCircle, MoreVertical, Search, BellOff, Trash2, Ban, Copy, ChevronDown, ChevronLeft, Loader2, MessageSquare, FileText
 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { getStoredSession, clearSession } from "@/lib/session";
+import { getDatesInRange, parseDate, getWeekdayCode } from "@/lib/utils";
+import ManagePointsModal, { type AttendanceCode } from "@/components/teacher/ManagePointsModal";
 import { useRouter } from "next/navigation";
 
-// Kalendar yordamchi funksiyalari
-const HOLIDAYS = ["01.10.2025", "08.12.2025", "01.01.2026", "08.03.2026", "21.03.2026", "22.03.2026", "09.05.2026"];
-function formatDate(dateStr: string) { 
-  const [y, m, d] = dateStr.split('-'); 
-  return `${d.padStart(2, '0')}.${m.padStart(2, '0')}.${y}`; 
+const HOLIDAYS = new Set(["01.10.2026", "08.12.2026", "01.01.2027", "08.03.2027", "21.03.2027", "22.03.2027", "09.05.2027"]);
+function formatDate(dateValue: string) {
+  const date = parseDate(dateValue);
+  if (!date) return dateValue;
+  return `${String(date.getDate()).padStart(2, "0")}.${String(date.getMonth() + 1).padStart(2, "0")}.${date.getFullYear()}`;
 }
-function getDayName(dateStr: string) { 
-  const days = ["Yak", "Du", "Se", "Ch", "Pa", "Ju", "Sh"]; 
-  return days[new Date(dateStr).getDay()]; 
+function getLocalISODate(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
-function getDatesInRange(startDate: string, endDate: string) {
-  const dates = []; 
-  let current = new Date(startDate.split('.').reverse().join('-')); 
-  const end = new Date(endDate.split('.').reverse().join('-'));
-  while (current <= end) { 
-    dates.push(current.toISOString().split('T')[0]); 
-    current.setDate(current.getDate() + 1); 
-  }
-  return dates;
+function getDayName(dateValue: string) {
+  const date = parseDate(dateValue);
+  if (!date) return "";
+  return ["Yak", "Du", "Se", "Ch", "Pa", "Ju", "Sh"][date.getDay()];
 }
 
 export default function TeacherDashboard() {
@@ -36,10 +33,11 @@ export default function TeacherDashboard() {
   const [currentTeacher, setCurrentTeacher] = useState<any>(null);
   const [activeMenu, setActiveMenu] = useState<"boshqaruv" | "timetable" | "jurnal" | "ish_reja" | "homeroom" | "settings" | "messenger">("boshqaruv");
   const [isLoading, setIsLoading] = useState(true);
-  
-  const [myStudents, setMyStudents] = useState<any[]>([]); 
-  const [myTimetable, setMyTimetable] = useState<any[]>([]); 
-  const [allClasses, setAllClasses] = useState<any[]>([]); 
+  const [loadError, setLoadError] = useState("");
+
+  const [myStudents, setMyStudents] = useState<any[]>([]);
+  const [myTimetable, setMyTimetable] = useState<any[]>([]);
+  const [allClasses, setAllClasses] = useState<any[]>([]);
   const [myClasses, setMyClasses] = useState<string[]>([]);
 
   // SOZLAMALAR
@@ -54,21 +52,26 @@ export default function TeacherDashboard() {
   // MESSENGER
   const [contacts, setContacts] = useState<any[]>([]);
   const [activeChat, setActiveChat] = useState<any>(null);
+  const [isMobileChatOpen, setIsMobileChatOpen] = useState(false);
   const [messages, setMessages] = useState<any[]>([]);
   const [msgInput, setMsgInput] = useState("");
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [isSavingContact, setIsSavingContact] = useState(false);
   const [showAddContact, setShowAddContact] = useState(false);
   const [contactForm, setContactForm] = useState({ id: "", name: "" });
   const [showChatMenu, setShowChatMenu] = useState(false);
 
   // CHORAK VA JADVAL STATE'LARI
-  const [selectedTerm, setSelectedTerm] = useState("1-chorak"); 
-  const [selectedTermPlan, setSelectedTermPlan] = useState("1-chorak"); 
+  const [selectedTerm, setSelectedTerm] = useState("1-chorak");
+  const [selectedTermPlan, setSelectedTermPlan] = useState("1-chorak");
 
   // ISH REJA
   const [selectedClassForPlan, setSelectedClassForPlan] = useState("");
   const [generatedDates, setGeneratedDates] = useState<any[]>([]);
   const [planForm, setPlanForm] = useState<{ [key: string]: { topic: string, homework: string, deadline: string } }>({});
-  
+  const [isSavingPlan, setIsSavingPlan] = useState(false);
+  const [isSyncingPlan, setIsSyncingPlan] = useState(false);
+
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [bulkTopicsText, setBulkTopicsText] = useState("");
 
@@ -78,137 +81,223 @@ export default function TeacherDashboard() {
   // JURNAL
   const [selectedClassToGrade, setSelectedClassToGrade] = useState("");
   const [studentsInJournal, setStudentsInJournal] = useState<any[]>([]);
-  const [localGrades, setLocalGrades] = useState<any>({});
-  const [pastFixCounts, setPastFixCounts] = useState<any>({}); 
-  
+  const [isJournalLoading, setIsJournalLoading] = useState(false);
+  const [journalError, setJournalError] = useState("");
+  const [journalRetry, setJournalRetry] = useState(0);
+  const [pastFixCounts, setPastFixCounts] = useState<any>({});
+
   const [gradeModal, setGradeModal] = useState<{ isOpen: boolean, type: 'today' | 'past' | 'bsb' | 'future', student: any, col: any } | null>(null);
   const [attendanceStatus, setAttendanceStatus] = useState<'keldi' | 'dq' | 'k'>('keldi');
   const [gradeInput, setGradeInput] = useState({ classwork: "", homework: "" });
-  const [ppRequestType, setPpRequestType] = useState("+1"); 
+  const [ppRequestType, setPpRequestType] = useState("+1");
   const [isGrading, setIsGrading] = useState(false);
 
   // ✅ HAFTA KUNLARI TARJIMASI
   const days = ["Du", "Se", "Ch", "Pa", "Ju", "Sh"];
-  const fullDayNames: Record<string, string> = { 
-    "Du": "Dushanba", "Se": "Seshanba", "Ch": "Chorshanba", 
-    "Pa": "Payshanba", "Ju": "Juma", "Sh": "Shanba" 
+  const fullDayNames: Record<string, string> = {
+    "Du": "Dushanba", "Se": "Seshanba", "Ch": "Chorshanba",
+    "Pa": "Payshanba", "Ju": "Juma", "Sh": "Shanba"
   };
   const lessonNumbers = [1, 2, 3, 4, 5, 6];
-  
-  const todayNameString = "Ch"; 
+
+  const todayNameString = getWeekdayCode() ?? "Du";
+
+  // Contact list has a stable callback so the auth bootstrap effect only reruns when needed.
+  const loadContacts = useCallback(async (teacherId: string) => {
+    const { data, error } = await supabase.from("contacts")
+      .select("id, owner_id, contact_id, contact_name")
+      .eq("owner_id", teacherId);
+    if (error) {
+      console.error("Kontaktlarni yuklashda xatolik:", error);
+      setLoadError("Kontaktlarni yuklab bo'lmadi. Messenger uchun RLS ruxsatlarini tekshiring.");
+      return;
+    }
+    setContacts(data ?? []);
+  }, []);
+
+  const fetchTeacherData = useCallback(async (teacherId: string) => {
+    setIsLoading(true);
+    setLoadError("");
+    try {
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("id, full_name, role, bio, homeroom, username")
+        .eq("id", teacherId)
+        .maybeSingle();
+      if (profileError) {
+        setLoadError("O'qituvchi ma'lumotlarini yuklab bo'lmadi. Baza ulanishi yoki RLS ruxsatlarini tekshiring.");
+        return;
+      }
+      if (!profile || profile.role !== "teacher") {
+        clearSession();
+        router.replace("/");
+        return;
+      }
+
+      setCurrentTeacher(profile);
+      const [studentsResponse, scheduleResponse, classesResponse] = await Promise.all([
+        profile.homeroom
+          ? supabase.from("profiles").select("id, full_name, class_name, cp_score").eq("role", "student").eq("class_name", profile.homeroom).order("full_name")
+          : Promise.resolve({ data: [], error: null }),
+        supabase.from("timetable").select("id, class_name, day_of_week, lesson_number, subject, teacher_id, group_type, room, term, start_date, end_date").eq("teacher_id", profile.id),
+        supabase.from("classes").select("name, max_limit, total_cp, homeroom_teacher").order("name"),
+      ]);
+      if (studentsResponse.error || scheduleResponse.error || classesResponse.error) {
+        setLoadError("Ayrim ma'lumotlar yuklanmadi. Supabase jadval nomlari va ruxsatlarini tekshiring.");
+      }
+      setMyStudents(studentsResponse.data || []);
+      const schedule = scheduleResponse.data || [];
+      setMyTimetable(schedule);
+      setMyClasses([...new Set([...schedule.map((item: any) => item.class_name), profile.homeroom].filter(Boolean))].sort());
+      setAllClasses(classesResponse.data || []);
+      await loadContacts(profile.id);
+    } catch (error) {
+      console.error(error);
+      setLoadError("O'qituvchi panelini yuklashda kutilmagan xatolik yuz berdi.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [loadContacts, router]);
 
   // ==========================================
   // XAVFSIZ YUKLASH TIZIMI
   // ==========================================
-  useEffect(() => { 
+  useEffect(() => {
     setIsMounted(true);
-    const tId = localStorage.getItem('teacher_id') || localStorage.getItem('user_id'); 
-    const role = localStorage.getItem('user_role');
-    
-    if (!tId || role !== 'teacher') {
-      localStorage.clear();
-      router.push('/'); 
+    const session = getStoredSession();
+    if (!session.id || session.role !== "teacher") {
+      clearSession();
+      setIsLoading(false);
+      router.replace("/");
       return;
     }
-    fetchTeacherData(tId);
-  }, [router]);
-
-  const fetchTeacherData = async (tId: string) => {
-    setIsLoading(true);
-    try {
-      const { data: profile, error } = await supabase.from('profiles').select('*').eq('id', tId).single();
-      if (error || !profile) {
-         localStorage.clear();
-         router.push('/');
-         return;
-      }
-
-      setCurrentTeacher(profile); 
-      
-      if (profile.homeroom) {
-        const { data: students } = await supabase.from('profiles').select('*').eq('role', 'student').eq('class_name', profile.homeroom).order('full_name');
-        setMyStudents(students || []);
-      }
-      
-      const { data: schedule } = await supabase.from('timetable').select('*').eq('teacher_id', profile.id);
-      setMyTimetable(schedule || []);
-      
-      if (schedule) {
-        const uniqueClasses = Array.from(new Set(schedule.map((s: any) => s.class_name))).sort() as string[];
-        setMyClasses(uniqueClasses);
-      }
-
-      const { data: classesData } = await supabase.from('classes').select('*').order('name');
-      setAllClasses(classesData || []);
-
-      loadContacts(profile.id);
-
-    } catch (error) { 
-      console.error(error); 
-    } finally { 
-      setIsLoading(false); 
+    if (!isSupabaseConfigured) {
+      setLoadError("Supabase sozlanmagan. Administrator .env.local faylini tekshirishi kerak.");
+      setIsLoading(false);
+      return;
     }
-  };
+    void fetchTeacherData(session.id);
+  }, [fetchTeacherData, router]);
 
   const todayClasses = myTimetable.filter(t => t.day_of_week === todayNameString).sort((a,b) => a.lesson_number - b.lesson_number);
 
   const goToJournal = async (className: string) => {
-    setActiveMenu("jurnal"); 
+    setActiveMenu("jurnal");
     handleSelectClassJournal(className);
   };
 
   const handleLogout = () => {
-    localStorage.clear();
-    router.push('/');
+    clearSession();
+    router.replace("/");
   };
 
   // MUROJAATNI YUBORISH
   const handleSendFeedback = async () => {
-    if (!feedbackForm.message) return alert("Xabar yozing!");
+    const message = feedbackForm.message.trim();
+    if (!message) return alert("Xabar yozing!");
     setIsSendingFeedback(true);
-    await supabase.from('feedbacks').insert([{ 
-      sender_id: currentTeacher.id, 
-      sender_name: currentTeacher.full_name, 
-      message: feedbackForm.message, 
-      is_anonymous: feedbackForm.isAnonymous 
-    }]);
-    alert("Murojaat ketdi!"); 
-    setShowFeedbackModal(false); 
-    setFeedbackForm({ message: "", isAnonymous: false });
-    setIsSendingFeedback(false);
+    try {
+      const { error } = await supabase.from("feedbacks").insert([{
+        sender_id: currentTeacher.id,
+        sender_name: currentTeacher.full_name,
+        message,
+        is_anonymous: feedbackForm.isAnonymous,
+      }]);
+      if (error) throw error;
+      alert("Murojaatingiz yuborildi.");
+      setShowFeedbackModal(false);
+      setFeedbackForm({ message: "", isAnonymous: false });
+    } catch (error) {
+      console.error("Murojaat yuborishda xatolik:", error);
+      alert(error instanceof Error ? error.message : "Murojaatni yuborib bo'lmadi. Qayta urinib ko'ring.");
+    } finally {
+      setIsSendingFeedback(false);
+    }
   };
 
   // MESSENGER
-  const loadContacts = async (tId = currentTeacher?.id) => {
-    if(!tId) return;
-    const { data } = await supabase.from('contacts').select('*').eq('owner_id', tId);
-    setContacts(data || []);
-  };
-  const loadMessages = async (contact_id: string) => {
-    const { data } = await supabase.from('messages').select('*').or(`and(sender_id.eq.${currentTeacher.id},receiver_id.eq.${contact_id}),and(sender_id.eq.${contact_id},receiver_id.eq.${currentTeacher.id})`).order('created_at', { ascending: true });
-    setMessages(data || []);
-  };
-  const handleAddContact = async () => {
-    if(!contactForm.id || !contactForm.name) return alert("To'ldiring!");
-    await supabase.from('contacts').insert([{ owner_id: currentTeacher.id, contact_id: contactForm.id.toUpperCase(), contact_name: contactForm.name }]);
-    setShowAddContact(false); 
-    setContactForm({id: "", name: ""}); 
-    loadContacts();
-  };
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault(); 
-    if(!msgInput.trim() || !activeChat) return;
-    const newMsg = { id: Date.now(), sender_id: currentTeacher.id, text: msgInput, created_at: new Date().toISOString() };
-    setMessages([...messages, newMsg]); 
-    setMsgInput("");
-    await supabase.from('messages').insert([{ sender_id: currentTeacher.id, receiver_id: activeChat.contact_id, text: newMsg.text }]);
-  };
-  const handleClearHistory = async () => {
-    if(confirm("Tarixni butunlay o'chirib yuborasizmi?")) {
-      await supabase.from('messages').delete().or(`and(sender_id.eq.${currentTeacher.id},receiver_id.eq.${activeChat.contact_id}),and(sender_id.eq.${activeChat.contact_id},receiver_id.eq.${currentTeacher.id})`);
-      setMessages([]); 
-      setShowChatMenu(false);
+  const loadMessages = async (contactId: string) => {
+    if (!currentTeacher?.id || !/^[A-Z0-9_-]{1,40}$/i.test(contactId)) {
+      setMessages([]);
+      return;
     }
+    setMessages([]);
+    const teacherId = currentTeacher.id;
+    const { data, error } = await supabase.from("messages")
+      .select("id, sender_id, receiver_id, text, created_at")
+      .or(`and(sender_id.eq.${teacherId},receiver_id.eq.${contactId}),and(sender_id.eq.${contactId},receiver_id.eq.${teacherId})`)
+      .order("created_at", { ascending: true });
+    if (error) {
+      console.error("Xabarlarni yuklashda xatolik:", error);
+      alert("Xabarlar yuklanmadi. Ulanish yoki ruxsatlarni tekshiring.");
+      return;
+    }
+    setMessages(data ?? []);
+  };
+
+  const handleAddContact = async () => {
+    const contactId = contactForm.id.trim().toUpperCase();
+    const contactName = contactForm.name.trim();
+    if (!/^[A-Z0-9_-]{1,40}$/.test(contactId) || !contactName) return alert("To'g'ri ID va kontakt nomini kiriting.");
+    if (contactId === currentTeacher.id) return alert("O'zingizni kontakt sifatida qo'sha olmaysiz.");
+
+    setIsSavingContact(true);
+    try {
+      const { data: profile, error: profileError } = await supabase.from("profiles").select("id").eq("id", contactId).maybeSingle();
+      if (profileError) throw profileError;
+      if (!profile) return alert("Bu ID bo'yicha foydalanuvchi topilmadi.");
+      const { data: existing, error: existingError } = await supabase.from("contacts").select("id").eq("owner_id", currentTeacher.id).eq("contact_id", contactId).maybeSingle();
+      if (existingError) throw existingError;
+      if (existing) return alert("Bu kontakt allaqachon ro'yxatda bor.");
+      const { error } = await supabase.from("contacts").insert([{ owner_id: currentTeacher.id, contact_id: contactId, contact_name: contactName }]);
+      if (error) throw error;
+      setShowAddContact(false);
+      setContactForm({ id: "", name: "" });
+      await loadContacts(currentTeacher.id);
+    } catch (error) {
+      console.error("Kontakt qo'shishda xatolik:", error);
+      alert(error instanceof Error ? error.message : "Kontaktni qo'shib bo'lmadi.");
+    } finally {
+      setIsSavingContact(false);
+    }
+  };
+
+  const handleSendMessage = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const text = msgInput.trim();
+    const chat = activeChat;
+    if (!text || !chat || isSendingMessage) return;
+    const optimisticId = `pending-${Date.now()}`;
+    const optimisticMessage = { id: optimisticId, sender_id: currentTeacher.id, receiver_id: chat.contact_id, text, created_at: new Date().toISOString() };
+    setMessages((previous) => [...previous, optimisticMessage]);
+    setMsgInput("");
+    setIsSendingMessage(true);
+    try {
+      const { error } = await supabase.from("messages").insert([{ sender_id: currentTeacher.id, receiver_id: chat.contact_id, text }]);
+      if (error) throw error;
+    } catch (error) {
+      console.error("Xabar yuborishda xatolik:", error);
+      setMessages((previous) => previous.filter((message) => message.id !== optimisticId));
+      if (activeChat?.contact_id === chat.contact_id) setMsgInput(text);
+      alert(error instanceof Error ? error.message : "Xabar yuborilmadi. Qayta urinib ko'ring.");
+    } finally {
+      setIsSendingMessage(false);
+    }
+  };
+
+  const handleClearHistory = async () => {
+    if (!activeChat || !confirm("Ushbu suhbat tarixini butunlay o'chirishni xohlaysizmi?")) return;
+    const contactId = activeChat.contact_id;
+    const teacherId = currentTeacher.id;
+    const { error } = await supabase.from("messages").delete()
+      .or(`and(sender_id.eq.${teacherId},receiver_id.eq.${contactId}),and(sender_id.eq.${contactId},receiver_id.eq.${teacherId})`);
+    if (error) {
+      console.error("Suhbat tarixini o'chirishda xatolik:", error);
+      alert("Suhbat tarixini o'chirib bo'lmadi.");
+      return;
+    }
+    setMessages([]);
+    setShowChatMenu(false);
   };
 
   // ISH REJA
@@ -216,9 +305,9 @@ export default function TeacherDashboard() {
     if (!selectedClassForPlan) return;
     const classSchedule = myTimetable.filter(t => t.class_name === selectedClassForPlan && t.term === selectedTermPlan);
     if (classSchedule.length === 0) return alert("Bu sinf va chorak uchun dars jadvali tuzilmagan!");
-    
+
     const lessonDays = Array.from(new Set(classSchedule.map(t => t.day_of_week)));
-    const startDate = classSchedule[0].start_date; 
+    const startDate = classSchedule[0].start_date;
     const endDate = classSchedule[0].end_date;
     if(!startDate || !endDate) return alert("Chorak sanalari belgilanmagan!");
 
@@ -227,11 +316,11 @@ export default function TeacherDashboard() {
     for (let d of allDates) {
       const dayName = getDayName(d);
       const formattedD = formatDate(d);
-      if (lessonDays.includes(dayName) && !HOLIDAYS.includes(formattedD)) {
-        validLessonDates.push({ date: formattedD, dayName });
+      if (lessonDays.includes(dayName) && !HOLIDAYS.has(formattedD)) {
+        validLessonDates.push({ date: d, label: formattedD, dayName });
       }
     }
-    setGeneratedDates(validLessonDates); 
+    setGeneratedDates(validLessonDates);
     setPlanForm({});
   };
 
@@ -241,8 +330,8 @@ export default function TeacherDashboard() {
     for (let i = 0; i < Math.min(topics.length, generatedDates.length); i++) {
       newPlanForm[generatedDates[i].date] = { topic: topics[i], homework: "Mavzuni o'qish", deadline: "Keyingi darsgacha" };
     }
-    setPlanForm(newPlanForm); 
-    setShowBulkModal(false); 
+    setPlanForm(newPlanForm);
+    setShowBulkModal(false);
     setBulkTopicsText("");
   };
 
@@ -251,199 +340,282 @@ export default function TeacherDashboard() {
   };
 
   const handleSaveFullPlan = async () => {
-    let inserted = 0;
-    await supabase.from('homeworks').delete().eq('class_name', selectedClassForPlan).eq('subject', currentTeacher.bio);
-
-    for (let gDate of generatedDates) {
+    if (!selectedClassForPlan) return;
+    const homeworkRows = generatedDates.flatMap((gDate) => {
       const plan = planForm[gDate.date];
-      if (plan && plan.topic) {
-        await supabase.from('homeworks').insert([{ 
-          class_name: selectedClassForPlan, 
-          subject: currentTeacher.bio, 
-          topic: plan.topic, 
-          description: plan.homework || "", 
-          deadline: plan.deadline || "Keyingi darsgacha", 
-          date: gDate.date 
-        }]);
-        inserted++;
+      if (!plan?.topic.trim()) return [];
+      return [{
+        class_name: selectedClassForPlan,
+        subject: currentTeacher.bio,
+        topic: plan.topic.trim(),
+        description: plan.homework.trim(),
+        deadline: plan.deadline || "Keyingi darsgacha",
+        date: gDate.date,
+      }];
+    });
+    if (!homeworkRows.length) return alert("Hech qanday mavzu kiritilmadi. Avvalgi vazifalar o'zgartirilmadi.");
+
+    setIsSavingPlan(true);
+    try {
+      const { data: oldRows, error: oldError } = await supabase.from("homeworks").select("id").eq("class_name", selectedClassForPlan).eq("subject", currentTeacher.bio);
+      if (oldError) throw oldError;
+      const { data: insertedRows, error: insertError } = await supabase.from("homeworks").insert(homeworkRows).select("id");
+      if (insertError) throw insertError;
+      const insertedIds = (insertedRows ?? []).map((row) => row.id).filter(Boolean);
+      if (insertedIds.length !== homeworkRows.length) {
+        if (insertedIds.length) await supabase.from("homeworks").delete().in("id", insertedIds);
+        throw new Error("Yangi vazifalarning hammasi saqlanmadi; avvalgi vazifalar saqlab qolindi.");
       }
+      const oldIds = (oldRows ?? []).map((row) => row.id).filter((id) => !insertedIds.includes(id));
+      if (oldIds.length) {
+        const { error: deleteError } = await supabase.from("homeworks").delete().in("id", oldIds);
+        if (deleteError) {
+          const { error: rollbackError } = await supabase.from("homeworks").delete().in("id", insertedIds);
+          throw new Error(rollbackError ? "Yangi rejalar saqlandi, lekin eskilarini tozalash va bekor qilishda xatolik yuz berdi." : "Avvalgi vazifalar saqlab qolindi; yangi rejalar bekor qilindi.");
+        }
+      }
+      alert(`${homeworkRows.length} ta dars rejasi saqlandi va o'quvchilarga yuborildi.`);
+    } catch (error) {
+      console.error("Ish rejani saqlashda xatolik:", error);
+      alert(error instanceof Error ? error.message : "Ish rejani saqlashda xatolik yuz berdi.");
+    } finally {
+      setIsSavingPlan(false);
     }
-    alert(`${inserted} ta dars rejasi saqlandi va o'quvchilarga yuborildi!`);
   };
 
   const handleSyncToClass = async () => {
-    if(!targetClassForSync) return alert("Sinfni tanlang!");
-    if(targetClassForSync === selectedClassForPlan) return alert("Boshqa sinfni tanlang!");
+    if (!targetClassForSync) return alert("Sinfni tanlang!");
+    if (targetClassForSync === selectedClassForPlan) return alert("Boshqa sinfni tanlang!");
 
-    const targetSchedule = myTimetable.filter(t => t.class_name === targetClassForSync && t.term === selectedTermPlan);
-    if(targetSchedule.length === 0) { 
-      return alert("Ushbu sinf uchun dars jadvali yo'q!"); 
-    }
-    
-    const lessonDays = Array.from(new Set(targetSchedule.map(t => t.day_of_week)));
-    const startDate = targetSchedule[0].start_date; 
-    const endDate = targetSchedule[0].end_date;
-    
-    const allDates = getDatesInRange(startDate, endDate);
-    const targetValidDates = [];
-    for (let d of allDates) {
-      const dayName = getDayName(d);
-      const formattedD = formatDate(d);
-      if (lessonDays.includes(dayName) && !HOLIDAYS.includes(formattedD)) {
-        targetValidDates.push(formattedD);
+    const targetSchedule = myTimetable.filter((item) => item.class_name === targetClassForSync && item.term === selectedTermPlan);
+    if (!targetSchedule.length) return alert("Ushbu sinf uchun dars jadvali yo'q!");
+    const { start_date: startDate, end_date: endDate } = targetSchedule[0];
+    if (!startDate || !endDate) return alert("Maqsadli sinf jadvalida chorak sanalari belgilanmagan!");
+
+    const lessonDays = Array.from(new Set(targetSchedule.map((item) => item.day_of_week)));
+    const targetValidDates = getDatesInRange(startDate, endDate).filter((date) => {
+      const dayName = getDayName(date);
+      return lessonDays.includes(dayName) && !HOLIDAYS.has(formatDate(date));
+    });
+    const currentTopics = generatedDates.flatMap((gDate) => {
+      const plan = planForm[gDate.date];
+      return plan?.topic.trim() ? [plan] : [];
+    });
+    if (!currentTopics.length) return alert("Sinxronlash uchun avval mavzularni kiriting!");
+    const rowsToInsert = currentTopics.slice(0, targetValidDates.length).map((plan, index) => ({
+      class_name: targetClassForSync,
+      subject: currentTeacher.bio,
+      topic: plan.topic.trim(),
+      description: plan.homework.trim() || "Mavzuni takrorlash",
+      deadline: plan.deadline || "Keyingi darsgacha",
+      date: targetValidDates[index],
+    }));
+    if (!rowsToInsert.length) return alert("Tanlangan chorakda reja ko'chirish uchun dars sanasi topilmadi.");
+
+    setIsSyncingPlan(true);
+    try {
+      const { data: oldRows, error: oldError } = await supabase.from("homeworks").select("id").eq("class_name", targetClassForSync).eq("subject", currentTeacher.bio);
+      if (oldError) throw oldError;
+      const { data: insertedRows, error: insertError } = await supabase.from("homeworks").insert(rowsToInsert).select("id");
+      if (insertError) throw insertError;
+      const insertedIds = (insertedRows ?? []).map((row) => row.id).filter(Boolean);
+      if (insertedIds.length !== rowsToInsert.length) {
+        if (insertedIds.length) await supabase.from("homeworks").delete().in("id", insertedIds);
+        throw new Error("Ko'chirilgan vazifalarning hammasi saqlanmadi; avvalgi vazifalar saqlab qolindi.");
       }
+      const oldIds = (oldRows ?? []).map((row) => row.id).filter((id) => !insertedIds.includes(id));
+      if (oldIds.length) {
+        const { error: deleteError } = await supabase.from("homeworks").delete().in("id", oldIds);
+        if (deleteError) {
+          const { error: rollbackError } = await supabase.from("homeworks").delete().in("id", insertedIds);
+          throw new Error(rollbackError ? "Yangi vazifalar saqlandi, lekin eskilarini tozalash va bekor qilishda xatolik yuz berdi." : "Avvalgi vazifalar saqlab qolindi; ko'chirilgan vazifalar bekor qilindi.");
+        }
+      }
+      const remaining = Math.max(0, currentTopics.length - rowsToInsert.length);
+      alert(`${rowsToInsert.length} ta mavzu ${targetClassForSync} sinfiga ko'chirildi.${remaining ? ` ${remaining} ta mavzu uchun chorakda bo'sh dars sanasi qolmadi.` : ""}`);
+      setShowSyncModal(false);
+    } catch (error) {
+      console.error("Rejani sinxronlashda xatolik:", error);
+      alert(error instanceof Error ? error.message : "Rejani ko'chirishda xatolik yuz berdi.");
+    } finally {
+      setIsSyncingPlan(false);
     }
-
-    const currentTopics = Object.values(planForm).filter(p => p.topic !== "");
-    if(currentTopics.length === 0) { 
-      return alert("Sinxronlash uchun avval mavzularni kiriting!"); 
-    }
-
-    await supabase.from('homeworks').delete().eq('class_name', targetClassForSync).eq('subject', currentTeacher.bio);
-
-    let inserted = 0;
-    for (let i = 0; i < Math.min(currentTopics.length, targetValidDates.length); i++) {
-      const targetDate = targetValidDates[i];
-      const topicData = currentTopics[i];
-      await supabase.from('homeworks').insert([{ 
-        class_name: targetClassForSync, 
-        subject: currentTeacher.bio, 
-        topic: topicData.topic, 
-        description: topicData.homework || "Mavzuni takrorlash", 
-        deadline: topicData.deadline || "Keyingi darsgacha", 
-        date: targetDate 
-      }]);
-      inserted++;
-    }
-
-    alert(`Muvaffaqiyatli! ${inserted} ta mavzu ${targetClassForSync} sinfining ${selectedTermPlan} dars kunlariga moslab ko'chirildi!`);
-    setShowSyncModal(false);
   };
 
   // JURNAL LOGIKASI
-  const handleSelectClassJournal = async (className: string) => {
-    setSelectedClassToGrade(className);
-    const { data } = await supabase.from('profiles').select('*').eq('role', 'student').eq('class_name', className).order('full_name');
-    setStudentsInJournal(data || []);
-  };
+  const handleSelectClassJournal = (className: string) => setSelectedClassToGrade(className);
+
+  useEffect(() => {
+    if (!selectedClassToGrade) {
+      setStudentsInJournal([]);
+      setJournalError("");
+      setIsJournalLoading(false);
+      return;
+    }
+    let active = true;
+    setIsJournalLoading(true);
+    setJournalError("");
+    void (async () => {
+      try {
+        const { data, error } = await supabase.from("profiles")
+          .select("id, full_name, class_name, cp_score")
+          .eq("role", "student")
+          .eq("class_name", selectedClassToGrade)
+          .order("full_name");
+        if (!active) return;
+        if (error) {
+          setStudentsInJournal([]);
+          setJournalError("Sinf o'quvchilarini yuklab bo'lmadi. Ruxsat va ulanishni tekshiring.");
+          return;
+        }
+        setStudentsInJournal(data ?? []);
+      } catch (error) {
+        console.error("Jurnal ro'yxatini yuklashda xatolik:", error);
+        if (active) setJournalError("Sinf o'quvchilarini yuklashda xatolik yuz berdi.");
+      } finally {
+        if (active) setIsJournalLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [selectedClassToGrade, journalRetry]);
 
   const handleCellClick = (student: any, col: any) => {
     if (col.type === "future") return alert("Kelajakdagi darslarga baho qo'yish taqiqlangan!");
-    setAttendanceStatus('keldi'); 
-    setGradeInput({ classwork: "", homework: "" }); 
+    setAttendanceStatus('keldi');
+    setGradeInput({ classwork: "", homework: "" });
     setGradeModal({ isOpen: true, type: col.type, student, col });
   };
 
   const submitTodayGrade = async () => {
-    setIsGrading(true); 
-    const student = gradeModal?.student; 
-    let addedCP = 0; 
+    const student = gradeModal?.student;
+    if (!student) return;
+
+    let addedCP = 0;
     let finalVisualGrade = "";
-    
-    if (attendanceStatus === 'dq') { 
-      addedCP = -5; finalVisualGrade = "DQ"; 
-    } 
-    else if (attendanceStatus === 'k') { 
-      addedCP = 0;  finalVisualGrade = "K"; 
-    } 
-    else {
-      if (!gradeInput.classwork && !gradeInput.homework) { 
-        setIsGrading(false); 
-        return alert("Baho kiriting (1 dan 10 gacha)!"); 
+    if (attendanceStatus === "dq") {
+      addedCP = -5;
+      finalVisualGrade = "DQ";
+    } else if (attendanceStatus === "k") {
+      finalVisualGrade = "K";
+    } else {
+      const enteredScores = [gradeInput.classwork, gradeInput.homework].filter((value) => value.trim() !== "");
+      if (!enteredScores.length) return alert("Kamida bitta bahoni 1 dan 10 gacha kiriting.");
+      if (enteredScores.some((value) => !/^(10|[1-9])$/.test(value.trim()))) {
+        return alert("Baho faqat 1 dan 10 gacha bo'lgan butun son bo'lishi kerak.");
       }
-      let total = 0; let count = 0;
-      if (gradeInput.classwork) { total += parseInt(gradeInput.classwork); count++; }
-      if (gradeInput.homework) { total += parseInt(gradeInput.homework); count++; }
-      const avg = Math.round(total / count); 
-      finalVisualGrade = avg.toString();
-      
-      if (avg >= 9.5) addedCP = 2; 
-      else if (avg >= 8.5) addedCP = 1; 
-      else if (avg >= 7.5) addedCP = 0; 
+      const average = enteredScores.reduce((sum, value) => sum + Number(value), 0) / enteredScores.length;
+      finalVisualGrade = Number.isInteger(average) ? String(average) : average.toFixed(1);
+      if (average >= 9.5) addedCP = 2;
+      else if (average >= 8.5) addedCP = 1;
+      else if (average >= 7.5) addedCP = 0;
       else addedCP = -2;
     }
-    
-    const newCP = (student.cp_score || 0) + addedCP;
-    const { error: profileError } = await supabase.from('profiles').update({ cp_score: newCP }).eq('id', student.id);
-    
-    if (!profileError) {
-       const { data: allClassStudents } = await supabase.from('profiles').select('cp_score').eq('role', 'student').eq('class_name', selectedClassToGrade);
-       let classTotalCP = 0; 
-       if (allClassStudents) { 
-         allClassStudents.forEach(s => { classTotalCP += (s.cp_score || 0) }); 
-       }
-       await supabase.from('classes').update({ total_cp: classTotalCP }).eq('name', selectedClassToGrade);
-       
-       const key = `${student.id}-${gradeModal?.col.label}`; 
-       setLocalGrades((prev: any) => ({ ...prev, [key]: finalVisualGrade }));
-       alert(`Baho saqlandi!\nNatija: ${addedCP > 0 ? '+'+addedCP+' CP' : addedCP < 0 ? addedCP+' CP (Jarima)' : '0 CP'}`); 
-       setGradeModal(null);
-    } else { 
-      alert("Xatolik yuz berdi!"); 
+
+    setIsGrading(true);
+    try {
+      const newCP = (Number(student.cp_score) || 0) + addedCP;
+      const { data: updatedStudent, error: profileError } = await supabase
+        .from("profiles")
+        .update({ cp_score: newCP })
+        .eq("id", student.id)
+        .eq("role", "student")
+        .select("id, cp_score")
+        .maybeSingle();
+      if (profileError) throw profileError;
+      if (!updatedStudent) throw new Error("Bahoni saqlashga ruxsat berilmadi yoki o'quvchi topilmadi.");
+
+      setStudentsInJournal((previous) => previous.map((item) => item.id === student.id ? { ...item, cp_score: newCP } : item));
+      setMyStudents((previous) => previous.map((item) => item.id === student.id ? { ...item, cp_score: newCP } : item));
+
+      let rankingWarning = "";
+      const { data: allClassStudents, error: rosterError } = await supabase
+        .from("profiles")
+        .select("cp_score")
+        .eq("role", "student")
+        .eq("class_name", selectedClassToGrade);
+      if (rosterError) {
+        rankingWarning = " Sinf reytingini qayta hisoblab bo'lmadi.";
+      } else {
+        const classTotalCP = (allClassStudents ?? []).reduce((total, item) => total + (Number(item.cp_score) || 0), 0);
+        const { error: classError } = await supabase.from("classes").update({ total_cp: classTotalCP }).eq("name", selectedClassToGrade);
+        if (classError) rankingWarning = " Sinf reytingi saqlanmadi.";
+      }
+
+      setGradeModal(null);
+      alert(`Baho saqlandi: ${finalVisualGrade}.\nNatija: ${addedCP > 0 ? `+${addedCP} CP` : addedCP < 0 ? `${addedCP} CP (jarima)` : "0 CP"}.${rankingWarning}`);
+    } catch (error) {
+      console.error("Bahoni saqlashda xatolik:", error);
+      alert(error instanceof Error ? error.message : "Bahoni saqlashda xatolik yuz berdi.");
+    } finally {
+      setIsGrading(false);
     }
-    setIsGrading(false);
   };
 
   const submitPPRequest = async () => {
-    setIsGrading(true); 
-    const student = gradeModal?.student; 
-    let amount = 0; 
+    setIsGrading(true);
+    const student = gradeModal?.student;
+    let amount = 0;
     let reason = "";
-    
-    if (gradeModal?.type === 'past') { 
+
+    if (gradeModal?.type === 'past') {
       const currentCount = pastFixCounts[student.id] || 0;
-      if (currentCount === 0) amount = 500; 
-      else if (currentCount === 1) amount = 700; 
+      if (currentCount === 0) amount = 500;
+      else if (currentCount === 1) amount = 700;
       else amount = 1000;
       reason = `${gradeModal?.col.label} sanasidagi bahoni to'g'rilash`;
-    } else { 
-      amount = ppRequestType === '+1' ? 10000 : 20000; 
-      reason = `Yozma ishdan ${ppRequestType} ball qo'shish`; 
+    } else {
+      amount = ppRequestType === '+1' ? 10000 : 20000;
+      reason = `Yozma ishdan ${ppRequestType} ball qo'shish`;
     }
-    
-    const { error } = await supabase.from('notifications').insert([{ 
-      user_id: student.id, 
-      title: "Ustozdan To'lov So'rovi", 
-      message: `Ustoz sizdan ${amount} PP to'lov so'rayapti.\nSabab: ${reason}\n\nRozimisiz?` 
+
+    const { error } = await supabase.from('notifications').insert([{
+      user_id: student.id,
+      title: "Ustozdan To'lov So'rovi",
+      message: `Ustoz sizdan ${amount} PP to'lov so'rayapti.\nSabab: ${reason}\n\nRozimisiz?`
     }]);
-    
-    if (!error) { 
+
+    if (!error) {
       alert(`So'rov o'quvchiga yuborildi!\nRozilik bersa sizga xabar keladi.`);
       if (gradeModal?.type === 'past') {
         setPastFixCounts({...pastFixCounts, [student.id]: (pastFixCounts[student.id] || 0) + 1});
       }
-      setGradeModal(null); 
+      setGradeModal(null);
     } else alert("Xatolik!");
-    
+
     setIsGrading(false);
   };
 
   const handleChangePassword = async () => {
-    if (newPassword.length < 4) return alert("Parol qisqa!");
+    const nextPassword = newPassword.trim();
+    if (nextPassword.length < 8) return alert("Yangi parol kamida 8 ta belgidan iborat bo'lishi kerak.");
     setIsChanging(true);
-    await supabase.from('profiles').update({ password: newPassword }).eq('id', currentTeacher.id);
-    alert("Parol yangilandi! Direktor panelida ham darhol o'zgardi."); 
-    setCurrentTeacher({ ...currentTeacher, password: newPassword }); 
-    setNewPassword(""); 
-    setIsChanging(false);
+    try {
+      const { data, error } = await supabase.from("profiles").update({ password: nextPassword }).eq("id", currentTeacher.id).eq("role", "teacher").select("id").maybeSingle();
+      if (error) throw error;
+      if (!data) throw new Error("Parolni yangilashga ruxsat berilmadi.");
+      alert("Yangi parol saqlandi. Keyingi kirishda shu paroldan foydalaning.");
+      setNewPassword("");
+    } catch (error) {
+      console.error("Parolni yangilashda xatolik:", error);
+      alert(error instanceof Error ? error.message : "Parolni yangilab bo'lmadi.");
+    } finally {
+      setIsChanging(false);
+    }
   };
 
   if (!isMounted) return null; // ✅ HYDRATION HIMOYASI
 
-  if (isLoading || !currentTeacher) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-slate-50 font-sans p-6">
-        <div className="flex flex-col items-center">
-           <div className="w-16 h-16 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-4 shadow-lg"></div>
-           <h2 className="text-2xl font-black text-slate-800 tracking-tight">Ma'lumotlar yuklanmoqda...</h2>
-        </div>
-      </div>
-    );
+  if (isLoading && !currentTeacher) {
+    return <div className="flex h-screen items-center justify-center bg-slate-50 p-6"><div className="flex flex-col items-center"><Loader2 className="mb-4 h-12 w-12 animate-spin text-indigo-600"/><h2 className="text-xl font-black text-slate-800">Ma'lumotlar yuklanmoqda...</h2></div></div>;
   }
+  if (loadError && !currentTeacher) {
+    return <div className="flex h-screen items-center justify-center bg-slate-50 p-6"><div className="max-w-md rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-xl"><h2 className="text-xl font-black text-slate-900">Panelni ochib bo'lmadi</h2><p className="mt-2 text-sm leading-6 text-slate-500">{loadError}</p><button onClick={() => { const session = getStoredSession(); if (session.id) void fetchTeacherData(session.id); }} className="mt-5 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white">Qayta yuklash</button></div></div>;
+  }
+  if (!currentTeacher) return null;
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans overflow-hidden">
-      
+
       {/* SIDEBAR */}
       <aside className="w-72 bg-indigo-950 border-r border-indigo-900 flex flex-col h-screen flex-shrink-0 z-20 text-indigo-100 hidden md:flex p-6">
         <div className="flex items-center gap-3 mb-10 px-2">
@@ -487,8 +659,9 @@ export default function TeacherDashboard() {
 
       {/* CONTENT */}
       <main className="flex-1 h-full overflow-y-auto p-8 lg:p-12 relative pb-24">
-        
-        <div className="w-full bg-gradient-to-r from-indigo-600 to-blue-600 rounded-[3rem] p-10 text-white shadow-xl relative overflow-hidden mb-10">
+        {loadError && <div role="alert" className="mb-6 flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900 sm:flex-row sm:items-center sm:justify-between"><span>{loadError}</span><button onClick={() => { const session = getStoredSession(); if (session.id) void fetchTeacherData(session.id); }} className="shrink-0 rounded-xl bg-amber-100 px-4 py-2 font-black hover:bg-amber-200">Qayta yuklash</button></div>}
+        {isLoading && currentTeacher && <div role="status" className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Ma'lumotlar yuklanmoqda...</div>}
+        <div className={`w-full bg-gradient-to-r from-indigo-600 to-blue-600 rounded-[3rem] p-10 text-white shadow-xl relative overflow-hidden mb-10 ${activeMenu === "messenger" ? "hidden" : ""}`}>
           <div className="absolute top-0 right-0 p-8 opacity-10"><BookOpen className="w-48 h-48" /></div>
           <div className="relative z-10">
             <h1 className="text-4xl font-black mb-2 tracking-tighter">Salom, {currentTeacher?.full_name} 👋</h1>
@@ -506,7 +679,7 @@ export default function TeacherDashboard() {
         </div>
 
         <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-          
+
           {/* ASOSIY PANEL */}
           {activeMenu === "boshqaruv" && (
             <div className="space-y-6">
@@ -543,7 +716,7 @@ export default function TeacherDashboard() {
             <div className="bg-white rounded-[3rem] shadow-sm border border-slate-100 overflow-hidden flex flex-col min-h-[700px]">
               <div className="p-8 border-b border-slate-100 bg-white">
                  <h2 className="text-2xl font-black text-slate-900 flex items-center"><Users className="w-6 h-6 mr-3 text-amber-500"/> Mening Sinfim: {currentTeacher.homeroom}</h2>
-                 <p className="text-slate-500 text-sm mt-1">Sinfingizdagi o'quvchilar ro'yxati, ID va parollari</p>
+                 <p className="text-slate-500 text-sm mt-1">Sinfingizdagi o'quvchilar ro'yxati va ularning reytingi.</p>
               </div>
               <div className="flex-1 overflow-x-auto p-6 bg-slate-50/50">
                 {myStudents.length === 0 ? (
@@ -555,8 +728,7 @@ export default function TeacherDashboard() {
                         <tr>
                           <th className="p-4 bg-slate-50 border-b border-slate-200 text-slate-600 font-bold text-xs">№</th>
                           <th className="p-4 bg-slate-50 border-b border-slate-200 text-slate-600 font-bold text-xs">F.I.SH</th>
-                          <th className="p-4 bg-slate-50 border-b border-slate-200 text-slate-600 font-bold text-xs text-center">ID Raqami</th>
-                          <th className="p-4 bg-slate-50 border-b border-slate-200 text-slate-600 font-bold text-xs text-center">Parol</th>
+                          <th className="p-4 bg-slate-50 border-b border-slate-200 text-slate-600 font-bold text-xs text-center">ID raqami</th>
                           <th className="p-4 bg-slate-50 border-b border-slate-200 text-slate-600 font-bold text-xs text-center">Reyting (CP)</th>
                         </tr>
                       </thead>
@@ -566,7 +738,6 @@ export default function TeacherDashboard() {
                             <td className="p-4 font-bold text-slate-400">{i + 1}</td>
                             <td className="p-4 font-bold text-slate-800">{s.full_name}</td>
                             <td className="p-4 font-black text-indigo-600 text-center">{s.id}</td>
-                            <td className="p-4 text-center"><span className="px-3 py-1 bg-slate-100 text-slate-600 font-mono font-bold rounded-lg tracking-widest">{s.password}</span></td>
                             <td className="p-4 font-black text-emerald-500 text-center">{s.cp_score || 0}</td>
                           </tr>
                         ))}
@@ -631,13 +802,13 @@ export default function TeacherDashboard() {
                       </thead>
                       <tbody>
                         {generatedDates.map((gDate, index) => {
-                          const dateKey = gDate.date; 
+                          const dateKey = gDate.date;
                           const pData = planForm[dateKey] || { topic: "", homework: "", deadline: "Keyingi darsgacha" };
                           return (
                             <tr key={dateKey} className="border-b border-slate-100 hover:bg-slate-50 focus-within:bg-indigo-50/30 transition-colors">
                               <td className="p-4 text-center font-bold text-slate-400">{index + 1}</td>
                               <td className="p-4 border-l border-slate-100">
-                                <span className="text-indigo-600 font-black text-base">{gDate.date}</span>
+                                <span className="text-indigo-600 font-black text-base">{gDate.label}</span>
                                 <span className="block text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">{fullDayNames[gDate.dayName]}</span>
                               </td>
                               <td className="p-2 border-l border-slate-100">
@@ -659,8 +830,8 @@ export default function TeacherDashboard() {
                     </table>
                   </div>
                   <div className="mt-8 flex justify-end">
-                    <button onClick={handleSaveFullPlan} className="px-10 py-5 bg-indigo-600 text-white font-black text-lg rounded-2xl shadow-xl hover:bg-indigo-700 transition-all flex items-center">
-                      <CheckCircle className="w-6 h-6 mr-3"/> O'QUVCHILARGA YUBORISH
+                    <button onClick={() => void handleSaveFullPlan()} disabled={isSavingPlan} className="px-10 py-5 bg-indigo-600 text-white font-black text-lg rounded-2xl shadow-xl hover:bg-indigo-700 transition-all flex items-center disabled:cursor-not-allowed disabled:opacity-50">
+                      {isSavingPlan ? <Loader2 className="w-6 h-6 mr-3 animate-spin"/> : <CheckCircle className="w-6 h-6 mr-3"/>} {isSavingPlan ? "SAQLANMOQDA..." : "O'QUVCHILARGA YUBORISH"}
                     </button>
                   </div>
                 </div>
@@ -685,7 +856,7 @@ export default function TeacherDashboard() {
                     <option value="4-chorak">4-chorak</option>
                  </select>
               </div>
-              
+
               <div className="flex-1 overflow-x-auto p-8">
                 <table className="w-full border-collapse bg-white shadow-sm rounded-2xl overflow-hidden border border-slate-100">
                   <thead>
@@ -744,14 +915,14 @@ export default function TeacherDashboard() {
                    </h2>
                    <p className="text-slate-500 font-medium mt-1">Sizga biriktirilgan sinflarni baholang.</p>
                  </div>
-                 
+
                  <div className="flex gap-4">
                    <div className="bg-white p-1.5 rounded-2xl flex border border-slate-200 shadow-sm">
                      {myClasses.length === 0 ? (
                        <div className="px-5 py-2.5 text-sm font-bold text-slate-400">Sizga hech qanday sinf biriktirilmagan</div>
                      ) : (
-                       <select 
-                         value={selectedClassToGrade} 
+                       <select
+                         value={selectedClassToGrade}
                          onChange={(e) => handleSelectClassJournal(e.target.value)}
                          className="px-4 py-2 font-black text-indigo-700 outline-none bg-transparent cursor-pointer"
                        >
@@ -777,41 +948,38 @@ export default function TeacherDashboard() {
                       <h3 className="text-2xl font-black text-slate-800">{selectedClassToGrade} o'quvchilari ro'yxati</h3>
                       <p className="text-sm font-bold text-slate-400">Jami: {studentsInJournal.length} ta o'quvchi</p>
                     </div>
-                    
-                    {studentsInJournal.length === 0 ? (
+
+                    {isJournalLoading ? (
+                      <div className="flex justify-center rounded-3xl border border-slate-100 bg-slate-50 p-12"><Loader2 className="h-8 w-8 animate-spin text-indigo-600" /></div>
+                    ) : journalError ? (
+                      <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm font-semibold text-rose-800">{journalError}<button onClick={() => setJournalRetry((value) => value + 1)} className="ml-3 underline">Qayta urinish</button></div>
+                    ) : studentsInJournal.length === 0 ? (
                       <div className="p-10 border-2 border-dashed border-slate-200 rounded-3xl text-center text-slate-400 font-bold">
                         Bu sinfda hozircha o'quvchilar yo'q.
                       </div>
                     ) : (
-                      <table className="w-full text-left border-collapse">
-                        <thead>
-                          <tr className="border-b-2 border-slate-100 text-slate-400 uppercase text-xs font-black tracking-widest">
-                            <th className="p-4 w-16 text-center">№</th>
-                            <th className="p-4">O'quvchi F.I.SH</th>
-                            <th className="p-4 text-center">Joriy Baho (PP)</th>
-                            <th className="p-4 text-right">Baholash</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {studentsInJournal.map((student, index) => (
-                            <tr key={student.id} className="border-b border-slate-50 hover:bg-indigo-50/30 transition-colors group">
-                              <td className="p-4 text-center font-bold text-slate-400">{index + 1}</td>
-                              <td className="p-4 font-bold text-slate-900">{student.full_name}</td>
-                              <td className="p-4 text-center">
-                                <span className="bg-amber-100 text-amber-700 font-black px-3 py-1 rounded-lg">
-                                  {student.pp_balance || 0} PP
-                                </span>
-                              </td>
-                              <td className="p-4 text-right">
-                                <div className="flex items-center justify-end gap-2 opacity-30 group-hover:opacity-100 transition-opacity">
-                                  <button className="w-10 h-10 rounded-xl bg-red-100 text-red-600 font-black hover:bg-red-500 hover:text-white transition-colors">-</button>
-                                  <button className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-600 font-black hover:bg-emerald-500 hover:text-white transition-colors">+</button>
-                                </div>
-                              </td>
+                      <div className="overflow-x-auto rounded-2xl border border-slate-100">
+                        <table className="w-full min-w-[620px] text-left border-collapse">
+                          <thead>
+                            <tr className="border-b-2 border-slate-100 bg-slate-50 text-slate-400 uppercase text-xs font-black tracking-widest">
+                              <th className="p-4 w-16 text-center">№</th>
+                              <th className="p-4">O'quvchi F.I.SH</th>
+                              <th className="p-4 text-center">Joriy CP</th>
+                              <th className="p-4 text-right">Amal</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody>
+                            {studentsInJournal.map((student, index) => (
+                              <tr key={student.id} className="border-b border-slate-50 last:border-0 hover:bg-indigo-50/30 transition-colors">
+                                <td className="p-4 text-center font-bold text-slate-400">{index + 1}</td>
+                                <td className="p-4 font-bold text-slate-900">{student.full_name}</td>
+                                <td className="p-4 text-center"><span className="rounded-lg bg-emerald-50 px-3 py-1 font-black text-emerald-700">{Number(student.cp_score) || 0} CP</span></td>
+                                <td className="p-4 text-right"><button type="button" onClick={() => handleCellClick(student, { type: "today", label: formatDate(getLocalISODate()) })} className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-black text-white shadow-sm transition hover:bg-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600">Baholash</button></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     )}
                   </div>
                 )}
@@ -821,8 +989,8 @@ export default function TeacherDashboard() {
 
           {/* MESSENGER */}
           {activeMenu === "messenger" && (
-            <div className="bg-white rounded-[2rem] shadow-sm border border-slate-200 h-[calc(100vh-140px)] flex overflow-hidden">
-              <div className="w-80 border-r border-slate-100 flex flex-col bg-slate-50/50">
+            <div className="bg-white rounded-[2rem] shadow-sm border border-slate-200 h-[calc(100vh-180px)] min-h-[420px] flex overflow-hidden">
+              <div className={`${isMobileChatOpen ? "hidden" : "flex"} w-full shrink-0 flex-col border-r border-slate-100 bg-slate-50/50 sm:flex sm:w-80`}>
                 <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-white">
                   <div className="relative flex-1 mr-2">
                     <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -834,30 +1002,31 @@ export default function TeacherDashboard() {
                 </div>
                 <div className="flex-1 overflow-y-auto">
                   {contacts.map(c => (
-                    <div key={c.id} onClick={() => { setActiveChat(c); loadMessages(c.contact_id); setShowChatMenu(false); }} className={`p-4 flex items-center gap-3 cursor-pointer border-b border-slate-50 transition-all ${activeChat?.id === c.id ? 'bg-indigo-50 border-indigo-100' : 'hover:bg-slate-100'}`}>
+                    <button key={c.id} type="button" onClick={() => { setActiveChat(c); void loadMessages(c.contact_id); setShowChatMenu(false); setIsMobileChatOpen(true); }} className={`w-full p-4 flex items-center gap-3 text-left cursor-pointer border-b border-slate-50 transition-all ${activeChat?.id === c.id ? 'bg-indigo-50 border-indigo-100' : 'hover:bg-slate-100'}`}>
                       <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-indigo-500 to-blue-500 text-white flex items-center justify-center font-black text-lg shadow-sm">
-                        {c.contact_name.charAt(0)}
+                        {c.contact_name?.charAt(0) || "?"}
                       </div>
-                      <div>
-                        <h3 className={`font-bold text-sm ${activeChat?.id === c.id ? 'text-indigo-900' : 'text-slate-800'}`}>{c.contact_name}</h3>
+                      <div className="min-w-0">
+                        <h3 className={`truncate font-bold text-sm ${activeChat?.id === c.id ? 'text-indigo-900' : 'text-slate-800'}`}>{c.contact_name || "Kontakt"}</h3>
                         <p className="text-xs text-slate-500 font-mono mt-0.5">{c.contact_id}</p>
                       </div>
-                    </div>
+                    </button>
                   ))}
                   {contacts.length === 0 && <p className="text-center text-slate-400 text-sm mt-10 p-4">Kontakt qo'shing.</p>}
                 </div>
               </div>
-              <div className="flex-1 flex flex-col bg-[#f0f2f5] relative">
+              <div className={`${isMobileChatOpen ? "flex" : "hidden"} min-w-0 flex-1 flex-col bg-[#f0f2f5] relative sm:flex`}>
                 {activeChat ? (
                   <>
                     <div className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 z-10 shadow-sm">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-indigo-500 text-white flex items-center justify-center font-black">
-                          {activeChat.contact_name.charAt(0)}
+                      <div className="flex min-w-0 items-center gap-3">
+                        <button type="button" aria-label="Kontaktlar ro'yxatiga qaytish" onClick={() => setIsMobileChatOpen(false)} className="rounded-lg p-1 text-slate-500 hover:bg-slate-100 sm:hidden"><ChevronLeft className="h-5 w-5" /></button>
+                        <div className="w-10 h-10 shrink-0 rounded-full bg-indigo-500 text-white flex items-center justify-center font-black">
+                          {activeChat.contact_name?.charAt(0) || "?"}
                         </div>
-                        <div>
-                          <h2 className="font-bold text-slate-800">{activeChat.contact_name}</h2>
-                          <p className="text-[11px] text-slate-500 uppercase tracking-widest">O'quvchi</p>
+                        <div className="min-w-0">
+                          <h2 className="truncate font-bold text-slate-800">{activeChat.contact_name || "Kontakt"}</h2>
+                          <p className="text-[11px] text-slate-500 uppercase tracking-widest">{String(activeChat.contact_id).startsWith("T-") ? "O'qituvchi" : "O'quvchi"}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2 relative">
@@ -896,9 +1065,9 @@ export default function TeacherDashboard() {
                       })}
                     </div>
                     <form onSubmit={handleSendMessage} className="p-4 bg-white border-t border-slate-200 flex gap-3 items-center">
-                      <input type="text" value={msgInput} onChange={e => setMsgInput(e.target.value)} placeholder="Xabar yozing..." className="flex-1 bg-slate-100 rounded-full py-3 px-5 outline-none focus:ring-2 focus:ring-indigo-500 text-sm" />
-                      <button type="submit" className="w-12 h-12 bg-indigo-600 text-white rounded-full flex items-center justify-center hover:bg-indigo-700 shadow-md transition-transform active:scale-95">
-                        <Send className="w-5 h-5 ml-1"/>
+                      <input type="text" value={msgInput} onChange={e => setMsgInput(e.target.value)} disabled={isSendingMessage} placeholder="Xabar yozing..." className="flex-1 bg-slate-100 rounded-full py-3 px-5 outline-none focus:ring-2 focus:ring-indigo-500 text-sm disabled:opacity-60" />
+                      <button type="submit" aria-label="Xabar yuborish" disabled={isSendingMessage || !msgInput.trim()} className="w-12 h-12 bg-indigo-600 text-white rounded-full flex items-center justify-center hover:bg-indigo-700 shadow-md transition-transform active:scale-95 disabled:cursor-not-allowed disabled:opacity-50">
+                        {isSendingMessage ? <Loader2 className="w-5 h-5 animate-spin"/> : <Send className="w-5 h-5 ml-1"/>}
                       </button>
                     </form>
                   </>
@@ -920,7 +1089,7 @@ export default function TeacherDashboard() {
               </div>
               <h2 className="text-3xl font-black text-slate-900 mb-2">Sozlamalar</h2>
               <p className="text-slate-500 font-bold text-xs uppercase tracking-widest mb-8">Shaxsiy parolingizni o'zgartiring</p>
-              <input type="text" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Yangi parol yozing..." className="w-full p-5 bg-slate-50 border-2 border-transparent focus:border-indigo-500 rounded-2xl mb-6 font-black text-lg outline-none text-center" />
+              <input type="password" autoComplete="new-password" minLength={8} value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Kamida 8 ta belgili yangi parol" className="w-full p-5 bg-slate-50 border-2 border-transparent focus:border-indigo-500 rounded-2xl mb-6 font-black text-lg outline-none text-center" />
               <button onClick={handleChangePassword} disabled={isChanging} className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black shadow-xl hover:bg-slate-800 transition-all flex items-center justify-center text-lg disabled:opacity-50">
                 {isChanging ? "SAQLANMOQDA..." : "PAROLNI SAQLASH"}
               </button>
@@ -930,12 +1099,29 @@ export default function TeacherDashboard() {
         </div>
       </main>
 
+      <nav aria-label="O'qituvchi menyusi" className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-1 pb-[env(safe-area-inset-bottom)] shadow-[0_-8px_30px_-20px_rgba(15,23,42,0.3)] backdrop-blur md:hidden">
+        <div className="flex overflow-x-auto">
+          {[
+            { key: "boshqaruv", label: "Asosiy", icon: LayoutDashboard },
+            { key: "timetable", label: "Jadval", icon: Calendar },
+            { key: "jurnal", label: "Jurnal", icon: TableProperties },
+            { key: "ish_reja", label: "Reja", icon: ListTodo },
+            { key: "messenger", label: "Xabarlar", icon: MessageCircle },
+            ...(currentTeacher?.homeroom ? [{ key: "homeroom", label: "Sinfim", icon: Users }] : []),
+            { key: "settings", label: "Sozlama", icon: Settings },
+          ].map((item) => {
+            const Icon = item.icon;
+            return <button key={item.key} type="button" aria-current={activeMenu === item.key ? "page" : undefined} onClick={() => { setActiveMenu(item.key as typeof activeMenu); setIsMobileChatOpen(false); }} className={`flex min-w-[68px] flex-1 flex-col items-center gap-1 px-2 py-2 text-[10px] font-bold ${activeMenu === item.key ? "text-indigo-700" : "text-slate-500"}`}><Icon className="h-5 w-5"/><span>{item.label}</span></button>;
+          })}
+        </div>
+      </nav>
+
       {/* FLOAT MUROJAAT TUGMASI */}
-      <div className="fixed bottom-4 w-[90%] md:w-auto left-1/2 transform -translate-x-1/2 z-40">
+      {activeMenu !== "messenger" && <div className="fixed bottom-20 w-[90%] md:bottom-4 md:w-auto left-1/2 transform -translate-x-1/2 z-30">
         <button onClick={() => setShowFeedbackModal(true)} className="w-full md:w-auto bg-slate-900/90 backdrop-blur-md text-slate-300 text-[13px] font-medium px-6 py-2.5 rounded-full shadow-2xl hover:text-white flex items-center justify-center gap-2 transition-all hover:bg-slate-900">
           <MessageSquare className="w-4 h-4 text-indigo-400"/> Tizim bo'yicha murojaat yo'llash
         </button>
-      </div>
+      </div>}
 
       {/* MODALLAR */}
 
@@ -964,78 +1150,26 @@ export default function TeacherDashboard() {
         </div>
       )}
 
-      {/* BAHOLASH MODALI */}
-      {gradeModal && gradeModal.isOpen && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in" onClick={() => setGradeModal(null)}>
-           <div className="bg-white rounded-[3rem] w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 border border-slate-100" onClick={e => e.stopPropagation()}>
-              <div className="p-8 bg-blue-50 border-b border-blue-100 flex justify-between items-start">
-                 <div>
-                   <h3 className="text-2xl font-black text-blue-900">{gradeModal.student.full_name}</h3>
-                   <p className="text-blue-600 font-bold text-sm uppercase tracking-widest mt-1">Sana: {gradeModal.col.label}</p>
-                 </div>
-                 <button onClick={() => setGradeModal(null)} className="text-blue-300 hover:text-blue-600 bg-white rounded-full p-2"><X className="w-5 h-5"/></button>
-              </div>
-              <div className="p-8 space-y-6">
-                 {gradeModal.type === 'today' && (
-                   <>
-                     <div className="grid grid-cols-3 gap-2 bg-slate-100 p-2 rounded-2xl">
-                        <button onClick={() => setAttendanceStatus('keldi')} className={`py-3 rounded-xl font-black text-xs transition-all ${attendanceStatus === 'keldi' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-400'}`}>Keldi</button>
-                        <button onClick={() => setAttendanceStatus('dq')} className={`py-3 rounded-xl font-black text-xs transition-all ${attendanceStatus === 'dq' ? 'bg-red-500 shadow-sm text-white' : 'text-slate-400'}`}>Sababsiz(DQ)</button>
-                        <button onClick={() => setAttendanceStatus('k')} className={`py-3 rounded-xl font-black text-xs transition-all ${attendanceStatus === 'k' ? 'bg-amber-500 shadow-sm text-white' : 'text-slate-400'}`}>Kasal(K)</button>
-                     </div>
-                     {attendanceStatus === 'keldi' ? (
-                       <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100">
-                          <label className="block text-slate-900 font-black text-sm mb-4">10 Ballik Baholash</label>
-                          <div className="flex items-center justify-between mb-4">
-                            <span className="font-bold text-slate-600">Dars ishtiroki:</span>
-                            <input type="number" min="1" max="10" placeholder="0" value={gradeInput.classwork} onChange={e => setGradeInput({...gradeInput, classwork: e.target.value})} className="w-20 p-3 text-center bg-white border-2 border-indigo-100 focus:border-indigo-500 rounded-xl font-black text-lg outline-none"/>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-slate-600">Uy vazifasi:</span>
-                            <input type="number" min="1" max="10" placeholder="0" value={gradeInput.homework} onChange={e => setGradeInput({...gradeInput, homework: e.target.value})} className="w-20 p-3 text-center bg-white border-2 border-indigo-100 focus:border-indigo-500 rounded-xl font-black text-lg outline-none"/>
-                          </div>
-                       </div>
-                     ) : (
-                       <div className={`p-6 rounded-3xl border ${attendanceStatus === 'dq' ? 'bg-red-50 border-red-100 text-red-600' : 'bg-amber-50 border-amber-100 text-amber-600'}`}>
-                         <p className="font-black text-center mb-2 flex items-center justify-center"><AlertCircle className="w-5 h-5 mr-2"/> Diqqat!</p>
-                         <p className="text-sm font-bold text-center">{attendanceStatus === 'dq' ? "-5 CP jarima yechiladi." : "Kasal bo'lgani uchun 0 CP."}</p>
-                       </div>
-                     )}
-                     <button onClick={submitTodayGrade} disabled={isGrading} className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black shadow-xl hover:bg-indigo-700 transition-all">
-                       {isGrading ? "SAQLANMOQDA..." : "JURNALGA SAQLASH (BEPUL)"}
-                     </button>
-                   </>
-                 )}
-                 {gradeModal.type === 'past' && (
-                   <>
-                     <div className="bg-amber-50 p-6 rounded-3xl border border-amber-200 text-center">
-                        <Award className="w-12 h-12 mx-auto text-amber-500 mb-3"/>
-                        <h4 className="font-black text-amber-900 text-lg mb-2">Eski bahoni to'g'rilash</h4>
-                        <p className="text-amber-700 text-sm font-medium">To'lov narxi: <b className="text-amber-900 ml-1">{(!pastFixCounts[gradeModal.student.id] || pastFixCounts[gradeModal.student.id] === 0) ? '500 PP' : pastFixCounts[gradeModal.student.id] === 1 ? '700 PP' : '1000 PP'}</b></p>
-                     </div>
-                     <button onClick={submitPPRequest} disabled={isGrading} className="w-full py-5 bg-amber-500 text-white rounded-2xl font-black shadow-xl hover:bg-amber-600 transition-all flex items-center justify-center">
-                       {isGrading ? "YUBORILMOQDA..." : <><Send className="w-5 h-5 mr-2"/> SO'ROV YUBORISH</>}
-                     </button>
-                   </>
-                 )}
-                 {gradeModal.type === 'bsb' && (
-                   <>
-                     <div className="bg-indigo-50 p-6 rounded-3xl border border-indigo-200 text-center">
-                        <Award className="w-12 h-12 mx-auto text-indigo-500 mb-3"/>
-                        <h4 className="font-black text-indigo-900 text-lg mb-2">BSB/CHSB uchun ball qo'shish</h4>
-                        <select value={ppRequestType} onChange={(e) => setPpRequestType(e.target.value)} className="w-full p-4 bg-white border border-indigo-200 rounded-xl outline-none focus:border-indigo-500 font-black text-indigo-900 shadow-sm mt-2">
-                          <option value="+1">+1 Ball (Narxi: 10,000 PP)</option>
-                          <option value="+2">+2 Ball (Narxi: 20,000 PP)</option>
-                        </select>
-                     </div>
-                     <button onClick={submitPPRequest} disabled={isGrading} className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black shadow-xl hover:bg-indigo-700 transition-all flex items-center justify-center">
-                       {isGrading ? "YUBORILMOQDA..." : <><Send className="w-5 h-5 mr-2"/> PP SO'ROV YUBORISH</>}
-                     </button>
-                   </>
-                 )}
-              </div>
-           </div>
-        </div>
+      {/* BAHOLASH / BALL SO'ROVI MODALI */}
+      {gradeModal?.isOpen && (
+        <ManagePointsModal
+          studentName={gradeModal.student.full_name}
+          dateLabel={gradeModal.col.label}
+          mode={gradeModal.type}
+          attendance={attendanceStatus}
+          classwork={gradeInput.classwork}
+          homework={gradeInput.homework}
+          pointsRequest={ppRequestType}
+          correctionCount={pastFixCounts[gradeModal.student.id] || 0}
+          isSubmitting={isGrading}
+          onAttendanceChange={setAttendanceStatus}
+          onClassworkChange={(value) => setGradeInput((previous) => ({ ...previous, classwork: value }))}
+          onHomeworkChange={(value) => setGradeInput((previous) => ({ ...previous, homework: value }))}
+          onPointsRequestChange={setPpRequestType}
+          onSaveGrade={() => void submitTodayGrade()}
+          onRequestPoints={() => void submitPPRequest()}
+          onClose={() => setGradeModal(null)}
+        />
       )}
 
       {/* KONTAKT QO'SHISH MODALI */}
@@ -1046,7 +1180,7 @@ export default function TeacherDashboard() {
              <div className="p-6 space-y-4">
                <input type="text" placeholder="ID (S-8392 yoki T-1122)" className="w-full p-4 bg-slate-50 rounded-xl outline-none font-mono uppercase" value={contactForm.id} onChange={e=>setContactForm({...contactForm, id: e.target.value})} />
                <input type="text" placeholder="Ism qo'ying" className="w-full p-4 bg-slate-50 rounded-xl outline-none font-bold" value={contactForm.name} onChange={e=>setContactForm({...contactForm, name: e.target.value})} />
-               <button onClick={handleAddContact} className="w-full py-4 bg-indigo-600 text-white font-black rounded-xl hover:bg-indigo-700">SAQLASH</button>
+               <button onClick={() => void handleAddContact()} disabled={isSavingContact} className="w-full py-4 bg-indigo-600 text-white font-black rounded-xl hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">{isSavingContact ? "SAQLANMOQDA..." : "SAQLASH"}</button>
              </div>
           </div>
         </div>
@@ -1082,8 +1216,8 @@ export default function TeacherDashboard() {
                     <option value="">Sinfni tanlang</option>
                     {allClasses.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
                  </select>
-                 <button onClick={handleSyncToClass} disabled={isLoading} className="w-full py-5 bg-emerald-600 text-white rounded-2xl font-black shadow-xl hover:bg-emerald-700 disabled:opacity-50 mt-4">
-                   {isLoading ? "KO'CHIRILMOQDA..." : "NUSXA OLISH"}
+                 <button onClick={() => void handleSyncToClass()} disabled={isSyncingPlan || isSavingPlan} className="w-full py-5 bg-emerald-600 text-white rounded-2xl font-black shadow-xl hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 mt-4">
+                   {isSyncingPlan ? "KO'CHIRILMOQDA..." : "NUSXA OLISH"}
                  </button>
               </div>
            </div>

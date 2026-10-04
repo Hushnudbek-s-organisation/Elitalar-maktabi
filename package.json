@@ -6,16 +6,16 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start -p $PORT",
-    "lint": "next lint"
+    "lint": "eslint .",
+    "test": "tsx --test src/lib/timetableAlgorithm.test.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.0.5",
     "@radix-ui/react-tabs": "^1.0.4",
-    "@supabase/ssr": "^0.1.0",
     "@supabase/supabase-js": "^2.39.3",
     "clsx": "^2.1.0",
     "lucide-react": "^0.368.0",
-    "next": "14.2.3",
+    "next": "15.5.24",
     "react": "^18",
     "react-dom": "^18",
     "sonner": "^1.4.41",
@@ -29,9 +29,13 @@
     "@types/react-dom": "^18",
     "autoprefixer": "^10.0.1",
     "eslint": "^8",
-    "eslint-config-next": "14.2.3",
-    "postcss": "^8",
-    "tailwindcss": "^3.4.1",
+    "eslint-config-next": "15.5.24",
+    "postcss": "8.5.28",
+    "tailwindcss": "3.4.19",
+    "tsx": "^4.23.15",
     "typescript": "^5"
+  },
+  "overrides": {
+    "postcss": "8.5.28"
   }
 }

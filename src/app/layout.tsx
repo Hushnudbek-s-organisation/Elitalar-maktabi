@@ -1,30 +1,28 @@
-import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import { Toaster } from "sonner"; // Chiroyli xabarnomalar uchun
+import { Toaster } from "sonner";
 
-// Sayt shriftini o'rnatish
-const inter = Inter({ subsets: ["latin"] });
-
-// Saytning SEO va brauzer tepadagi nomi
 export const metadata: Metadata = {
-  title: "Elita eMaktab",
-  description: "Yopiq ta'lim va moliya platformasi",
+  title: {
+    default: "ELITA | Maktab platformasi",
+    template: "%s | ELITA",
+  },
+  description: "ELITA maktabining ta'lim, aloqa va o'quvchi yutuqlari platformasi.",
+  applicationName: "ELITA eMaktab",
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export const viewport: Viewport = {
+  themeColor: "#f5f8ff",
+  width: "device-width",
+  initialScale: 1,
+};
+
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="uz" className="light">
-      <body className={`${inter.className} bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 antialiased`}>
-        {/* Butun sayt sahifalari shu yerda ochiladi */}
+    <html lang="uz">
+      <body className="min-h-screen bg-slate-50 text-slate-900 antialiased">
         {children}
-        
-        {/* Tizimdagi xabarnomalar (Masalan: "Pul o'tkazildi") uchun qobiq */}
-        <Toaster position="top-right" richColors />
+        <Toaster position="top-right" richColors closeButton />
       </body>
     </html>
   );
