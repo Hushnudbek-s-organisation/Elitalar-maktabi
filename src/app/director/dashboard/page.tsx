@@ -5,10 +5,14 @@ import {
   Users, UserPlus, Shield, Calendar, Calculator, 
   Crown, LayoutDashboard, CheckCircle2, X, PlusCircle, 
   School, Edit, Trash2, Search, ArrowLeft, MessageSquare, 
-  Send, CheckCircle, Key, Clock, Wand2, AlertTriangle, Settings2, FileText, ChevronDown, LogOut, Loader2
+  Send, CheckCircle, Key, Clock, Wand2, AlertTriangle, Settings2, FileText, ChevronDown, LogOut, Loader2, Copy
 } from "lucide-react";
 import { supabase } from "@/lib/supabase"; 
-import { generateTimetable } from "@/lib/timetableAlgorithm";
+import { generateTimetableDetailed } from "@/lib/timetableAlgorithm";
+import { generateAccountId, generateOneTimePassword } from "@/lib/credentials";
+import { isSupabaseConfigured } from "@/lib/supabase";
+import { clearSession, getStoredSession } from "@/lib/session";
+import { safeJsonParse } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 
 export default function DirectorDashboard() {
@@ -18,30 +22,49 @@ export default function DirectorDashboard() {
   // Auth Loading
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [credentials, setCredentials] = useState<{ role: string; id: string; password: string } | null>(null);
 
   useEffect(() => {
+    let alive = true;
     const verifyAdmin = async () => {
-      const uid = localStorage.getItem('user_id');
-      const role = localStorage.getItem('user_role');
-      
-      if (!uid || (role !== 'director' && role !== 'admin')) {
-        localStorage.clear();
-        router.push('/');
+      const session = getStoredSession();
+      if (!session.id || (session.role !== "director" && session.role !== "admin")) {
+        clearSession();
+        router.replace("/");
+        return;
+      }
+      if (!isSupabaseConfigured) {
+        setLoadError("Supabase sozlanmagan. .env.local faylini tekshiring.");
+        setIsAuthLoading(false);
+        return;
+      }
+      const { data: profile, error } = await supabase.from("profiles").select("id, role").eq("id", session.id).maybeSingle();
+      if (!alive) return;
+      if (error) {
+        setLoadError("Direktor huquqini tekshirib bo'lmadi. Baza ulanishi yoki ruxsatlarni tekshiring.");
+        setIsAuthLoading(false);
+        return;
+      }
+      const actualRole = String(profile?.role ?? "").toLowerCase();
+      if (!profile || (actualRole !== "director" && actualRole !== "admin")) {
+        clearSession();
+        router.replace("/");
         return;
       }
       setIsAuthLoading(false);
-      fetchData(); 
+      void fetchData();
     };
 
-    verifyAdmin();
-
-    const savedWorkloads = localStorage.getItem('elita_workloads');
-    if (savedWorkloads) setWorkloads(JSON.parse(savedWorkloads));
+    void verifyAdmin();
+    const savedWorkloads = safeJsonParse<any[]>(localStorage.getItem("elita_workloads"), []);
+    setWorkloads(Array.isArray(savedWorkloads) ? savedWorkloads : []);
+    return () => { alive = false; };
   }, [router]);
 
   const handleLogout = () => {
-    localStorage.clear();
-    router.push('/');
+    clearSession();
+    router.replace("/");
   };
 
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
@@ -86,8 +109,8 @@ export default function DirectorDashboard() {
 
   const [selectedClassForTimetable, setSelectedClassForTimetable] = useState<string | null>(null);
   const [selectedTerm, setSelectedTerm] = useState("1-chorak");
-  const [termStartDate, setTermStartDate] = useState("02.09.2025");
-  const [termEndDate, setTermEndDate] = useState("03.11.2025");
+  const [termStartDate, setTermStartDate] = useState("2026-09-02");
+  const [termEndDate, setTermEndDate] = useState("2026-11-03");
 
   const [currentCell, setCurrentCell] = useState<{ day: string, lesson: number } | null>(null);
   const [lessonForm, setLessonForm] = useState({ subject: "", teacher_id: "", room: "", group_type: "Barchasi" });
@@ -109,35 +132,49 @@ export default function DirectorDashboard() {
   const groupTypes = ["Barchasi", "1-guruh", "2-guruh", "O'g'il bolalar", "Qizlar"];
   const splitModes = ["Barchasi", "1 va 2-guruhlarga bo'lish", "O'g'il va Qiz bolalarga bo'lish"];
 
-  const generatePassword = () => Math.random().toString(36).slice(-6).toUpperCase();
-
   const fetchData = async () => {
     setIsLoading(true);
+    setLoadError("");
     try {
-      const { data: tData } = await supabase.from('profiles').select('*').eq('role', 'teacher').order('created_at', { ascending: false });
-      setTeachers(tData || []);
-      const { data: cData } = await supabase.from('classes').select('*').order('name');
-      setClasses(cData || []);
-      const { data: sData } = await supabase.from('profiles').select('*').eq('role', 'student').order('full_name');
-      setAllStudents(sData || []);
-      const { data: fData } = await supabase.from('feedbacks').select('*').order('created_at', { ascending: false });
-      setFeedbacks(fData || []);
-      const { data: timeData } = await supabase.from('timetable').select('*');
-      setTimetableData(timeData || []);
-    } catch (err) { 
-      console.error(err); 
-    } finally { 
-      setIsLoading(false); 
+      const [teacherResponse, classResponse, studentResponse, feedbackResponse, timetableResponse] = await Promise.all([
+        supabase.from("profiles").select("id, full_name, role, bio, homeroom, created_at").eq("role", "teacher").order("created_at", { ascending: false }),
+        supabase.from("classes").select("name, max_limit, total_cp, homeroom_teacher").order("name"),
+        supabase.from("profiles").select("id, full_name, role, class_name, pp_balance, cp_score, created_at").eq("role", "student").order("full_name"),
+        supabase.from("feedbacks").select("id, sender_id, sender_name, message, is_anonymous, status, answer, created_at").order("created_at", { ascending: false }),
+        supabase.from("timetable").select("id, class_name, day_of_week, lesson_number, subject, teacher_id, group_type, room, term, start_date, end_date"),
+      ]);
+      const failure = [teacherResponse, classResponse, studentResponse, feedbackResponse, timetableResponse].find((response) => response.error);
+      if (failure?.error) {
+        console.error("Direktor panelini yuklashda xatolik:", failure.error.message);
+        setLoadError("Ma'lumotlarni to'liq yuklab bo'lmadi. Supabase jadvallari va RLS ruxsatlarini tekshiring.");
+      }
+      setTeachers(teacherResponse.data || []);
+      setClasses(classResponse.data || []);
+      setAllStudents(studentResponse.data || []);
+      setFeedbacks(feedbackResponse.data || []);
+      setTimetableData(timetableResponse.data || []);
+    } catch (err) {
+      console.error(err);
+      setLoadError("Ma'lumotlarni yuklashda kutilmagan xatolik yuz berdi.");
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const getStudentsCount = (className: string) => allStudents.filter(s => s.class_name === className).length;
 
   useEffect(() => {
-    if(selectedTerm === '1-chorak') { setTermStartDate("02.09.2025"); setTermEndDate("03.11.2025"); }
-    else if(selectedTerm === '2-chorak') { setTermStartDate("10.11.2025"); setTermEndDate("27.12.2025"); }
-    else if(selectedTerm === '3-chorak') { setTermStartDate("11.01.2026"); setTermEndDate("20.03.2026"); }
-    else if(selectedTerm === '4-chorak') { setTermStartDate("28.03.2026"); setTermEndDate("25.05.2026"); }
+    const termDates: Record<string, [string, string]> = {
+      "1-chorak": ["2026-09-02", "2026-11-03"],
+      "2-chorak": ["2026-11-10", "2026-12-27"],
+      "3-chorak": ["2027-01-11", "2027-03-20"],
+      "4-chorak": ["2027-03-28", "2027-05-25"],
+    };
+    const [start, end] = termDates[selectedTerm];
+    if (start && end) {
+      setTermStartDate(start);
+      setTermEndDate(end);
+    }
   }, [selectedTerm]);
 
   const toggleClassInWorkload = (cName: string) => {
@@ -162,13 +199,13 @@ export default function DirectorDashboard() {
     let updated = [...workloads];
     workloadForm.class_names.forEach(cls => {
        if (workloadForm.split_mode === "Barchasi") {
-          updated.push({ id: Math.random().toString(), class_name: cls, subject: workloadForm.subject, teacher_id: workloadForm.teacher_id, hours: workloadForm.hours, group_type: "Barchasi" });
+          updated.push({ id: crypto.randomUUID(), class_name: cls, subject: workloadForm.subject, teacher_id: workloadForm.teacher_id, hours: workloadForm.hours, group_type: "Barchasi" });
        } else if (workloadForm.split_mode === "1 va 2-guruhlarga bo'lish") {
-          updated.push({ id: Math.random().toString(), class_name: cls, subject: workloadForm.subject, teacher_id: workloadForm.teacher_id, hours: workloadForm.hours, group_type: "1-guruh" });
-          updated.push({ id: Math.random().toString(), class_name: cls, subject: workloadForm.subject, teacher_id: workloadForm.teacher_id_2, hours: workloadForm.hours, group_type: "2-guruh" });
+          updated.push({ id: crypto.randomUUID(), class_name: cls, subject: workloadForm.subject, teacher_id: workloadForm.teacher_id, hours: workloadForm.hours, group_type: "1-guruh" });
+          updated.push({ id: crypto.randomUUID(), class_name: cls, subject: workloadForm.subject, teacher_id: workloadForm.teacher_id_2, hours: workloadForm.hours, group_type: "2-guruh" });
        } else if (workloadForm.split_mode === "O'g'il va Qiz bolalarga bo'lish") {
-          updated.push({ id: Math.random().toString(), class_name: cls, subject: workloadForm.subject, teacher_id: workloadForm.teacher_id, hours: workloadForm.hours, group_type: "O'g'il bolalar" });
-          updated.push({ id: Math.random().toString(), class_name: cls, subject: workloadForm.subject, teacher_id: workloadForm.teacher_id_2, hours: workloadForm.hours, group_type: "Qizlar" });
+          updated.push({ id: crypto.randomUUID(), class_name: cls, subject: workloadForm.subject, teacher_id: workloadForm.teacher_id, hours: workloadForm.hours, group_type: "O'g'il bolalar" });
+          updated.push({ id: crypto.randomUUID(), class_name: cls, subject: workloadForm.subject, teacher_id: workloadForm.teacher_id_2, hours: workloadForm.hours, group_type: "Qizlar" });
        }
     });
 
@@ -186,96 +223,120 @@ export default function DirectorDashboard() {
     showToast("Yuklama o'chirildi!");
   };
 
-  // ✅ BAZA XATOSI TO'LIQ TUZATILGAN JOY
-  const handleAutoGenerate = async () => {
+  const handleAutoGenerate = () => {
     if (workloads.length === 0) {
-      showToast("Jadval tuzish uchun avval 'Dars Yuklamalari' bo'limidan dars soatlarini kiritib chiqing!", "error");
-      setShowWorkloadModal(true); return;
+      showToast("Jadval tuzishdan oldin dars yuklamalarini kiriting.", "error");
+      setShowWorkloadModal(true);
+      return;
     }
 
     setConfirmDialog({
-      message: "Diqqat! Eski jadvallar o'chib, 'Kelajak soati' qoidalari asosida yangi jadval tuziladi. Davom etasizmi?",
+      message: "Tanlangan chorak jadvali qayta tuziladi. Yangi jadval tekshirilib saqlangandan keyingina eski jadval almashtiriladi. Davom etasizmi?",
       onConfirm: async () => {
-        setConfirmDialog(null); 
+        setConfirmDialog(null);
+        setConflictWarning(null);
         setIsGenerating(true);
-        
-        await supabase.from('timetable').delete().eq('term', selectedTerm);
+        try {
+          const requests = workloads.map((item) => ({
+            className: item.class_name,
+            subject: item.subject,
+            teacherId: item.teacher_id,
+            hoursPerWeek: Number(item.hours),
+            groupType: item.group_type || "Barchasi",
+          }));
+          classes.forEach((classItem) => {
+            const homeroomTeacher = teachers.find((teacher) => teacher.homeroom === classItem.name);
+            if (homeroomTeacher) requests.push({ className: classItem.name, subject: "Kelajak soati", teacherId: homeroomTeacher.id, hoursPerWeek: 1, groupType: "Barchasi" });
+          });
 
-        let requests: any[] = [];
-        
-        workloads.forEach(w => {
-           requests.push({ className: w.class_name, subject: w.subject, teacherId: w.teacher_id, hoursPerWeek: w.hours, groupType: w.group_type || "Barchasi" });
-        });
-
-        // KELAJAK SOATI QO'SHISH
-        classes.forEach(cls => {
-           const hrTeacher = teachers.find(t => t.homeroom === cls.name);
-           if (hrTeacher) {
-              requests.push({ className: cls.name, subject: "Kelajak soati", teacherId: hrTeacher.id, hoursPerWeek: 1, groupType: "Barchasi" });
-           }
-        });
-
-        // Algoritm orqali jadval yaratiladi
-        const newSchedule = generateTimetable(requests);
-
-        // 🔥 FILTRLASH: Dublikatlarni ushlash va faqat tozasini saqlash
-        const uniqueInsertData: any[] = [];
-        const seenSlots = new Set();
-
-        newSchedule.forEach(s => {
-           // Bitta sinf, bitta kun, bitta soat, bitta guruh uchun YAGONA kalit
-           const uniqueKey = `${s.class_name}_${s.day_of_week}_${s.lesson_number}_${s.group_type || "Barchasi"}`;
-           
-           if (!seenSlots.has(uniqueKey)) {
-              seenSlots.add(uniqueKey);
-              uniqueInsertData.push({
-                 class_name: s.class_name, 
-                 day_of_week: s.day_of_week, 
-                 lesson_number: s.lesson_number,
-                 subject: s.subject, 
-                 teacher_id: s.teacher_id, 
-                 group_type: s.group_type || "Barchasi", 
-                 room: s.room || null, 
-                 term: selectedTerm, 
-                 start_date: termStartDate, 
-                 end_date: termEndDate
-              });
-           }
-        });
-
-        if(uniqueInsertData.length > 0) {
-          const { error } = await supabase.from('timetable').insert(uniqueInsertData); 
-          if (error) {
-            showToast("BAZA XATOSI: " + error.message, "error");
-          } else {
-            showToast(`Algoritm jadvalni muvaffaqiyatli tuzdi! ${uniqueInsertData.length} ta dars joylandi.`, "success");
+          const result = generateTimetableDetailed(requests);
+          if (result.errors.length) {
+            const message = result.errors.slice(0, 2).join(" ");
+            setConflictWarning(message);
+            showToast(`Yuklamalarni tekshiring: ${message}`, "error");
+            return;
           }
-        } else { 
-          showToast("XATOLIK! Darslarni joylashning umuman imkoni bo'lmadi.", "error"); 
+          if (result.unplaced.length) {
+            const unplacedSummary = result.unplaced.slice(0, 3).map((item) => `${item.className} — ${item.subject}: ${item.placedHours}/${item.requestedHours}`).join("; ");
+            setConflictWarning(`Joylashtirilmagan darslar: ${unplacedSummary}. Yuklama yoki o'qituvchi bandligini o'zgartiring.`);
+            showToast(`${result.unplaced.length} ta fan yuklamasi to'liq joylashmadi. Eski jadval saqlab qolindi.`, "error");
+            return;
+          }
+          if (!result.lessons.length) {
+            showToast("Jadval uchun saqlanadigan dars topilmadi.", "error");
+            return;
+          }
+
+          const uniqueInsertData = result.lessons.map((lesson) => ({
+            class_name: lesson.class_name,
+            day_of_week: lesson.day_of_week,
+            lesson_number: lesson.lesson_number,
+            subject: lesson.subject,
+            teacher_id: lesson.teacher_id,
+            group_type: lesson.group_type || "Barchasi",
+            room: lesson.room || null,
+            term: selectedTerm,
+            start_date: termStartDate,
+            end_date: termEndDate,
+          }));
+          const { data: existingRows, error: existingError } = await supabase.from("timetable").select("id").eq("term", selectedTerm);
+          if (existingError) throw existingError;
+
+          // Insert first; if it fails, the previously published schedule remains untouched.
+          const { data: insertedRows, error: insertError } = await supabase.from("timetable").insert(uniqueInsertData).select("id");
+          if (insertError) throw insertError;
+          const insertedIds = (insertedRows ?? []).map((row) => row.id).filter(Boolean);
+          if (insertedIds.length !== uniqueInsertData.length) {
+            if (insertedIds.length) await supabase.from("timetable").delete().in("id", insertedIds);
+            throw new Error("Yangi jadvalning barcha qatorlari tasdiqlanmadi; eski jadval saqlab qolindi.");
+          }
+
+          const oldIds = (existingRows ?? []).map((row) => row.id).filter((id) => !insertedIds.includes(id));
+          if (oldIds.length) {
+            const { error: deleteError } = await supabase.from("timetable").delete().in("id", oldIds);
+            if (deleteError) {
+              await supabase.from("timetable").delete().in("id", insertedIds);
+              throw deleteError;
+            }
+          }
+          const sessions = new Set(uniqueInsertData.map((lesson) => `${lesson.class_name}:${lesson.day_of_week}:${lesson.lesson_number}`)).size;
+          showToast(`Jadval saqlandi: ${sessions} ta dars vaqti, ${uniqueInsertData.length} ta guruh yozuvi.`, "success");
+          await fetchData();
+        } catch (error) {
+          console.error("Jadvalni saqlashda xatolik:", error);
+          showToast(error instanceof Error ? error.message : "Jadvalni saqlashda xatolik yuz berdi.", "error");
+        } finally {
+          setIsGenerating(false);
         }
-        
-        setIsGenerating(false); 
-        fetchData();
-      }
+      },
     });
   };
 
   const currentCellLessons = currentCell ? timetableData.filter(t => t.class_name === selectedClassForTimetable && t.day_of_week === currentCell.day && t.lesson_number === currentCell.lesson && t.term === selectedTerm) : [];
 
   const handleSaveLesson = async () => {
-    if(!lessonForm.subject || !lessonForm.teacher_id) return showToast("Fan va Ustozni tanlang!", "error");
+    if (!selectedClassForTimetable || !currentCell) return showToast("Avval sinf va jadval katagini tanlang.", "error");
+    if (!lessonForm.subject || !lessonForm.teacher_id) return showToast("Fan va o'qituvchini tanlang.", "error");
 
-    const isBusy = timetableData.find(t => t.term === selectedTerm && t.day_of_week === currentCell?.day && t.lesson_number === currentCell?.lesson && t.teacher_id === lessonForm.teacher_id && t.class_name !== selectedClassForTimetable);
+    const isBusy = timetableData.find(t => t.term === selectedTerm && t.day_of_week === currentCell.day && t.lesson_number === currentCell.lesson && t.teacher_id === lessonForm.teacher_id && t.class_name !== selectedClassForTimetable);
     if (isBusy) {
       const teacherName = teachers.find(t => t.id === lessonForm.teacher_id)?.full_name;
       setConflictWarning(`🔴 KONFLIKT: Ustoz ${teacherName} ayni shu vaqtda ${isBusy.class_name} sinfida dars o'tadi.`);
       return; 
     }
 
+    if (currentCellLessons.some((lesson) => lesson.teacher_id === lessonForm.teacher_id)) {
+      setConflictWarning("Bir o'qituvchi bir vaqtda ikki guruhga dars o'ta olmaydi.");
+      return;
+    }
+
     if (currentCellLessons.length > 0) {
-      if (lessonForm.group_type === 'Barchasi' || currentCellLessons.some(c => c.group_type === 'Barchasi')) {
-         setConflictWarning(`🔴 XATO: Bu vaqtga boshqa guruh qo'shib bo'lmaydi.`); 
-         return;
+      const wholeClassExists = currentCellLessons.some((lesson) => !lesson.group_type || lesson.group_type === "Barchasi");
+      const groupAlreadyExists = currentCellLessons.some((lesson) => lesson.group_type === lessonForm.group_type);
+      const differentSubjectExists = currentCellLessons.some((lesson) => lesson.subject !== lessonForm.subject);
+      if (lessonForm.group_type === "Barchasi" || wholeClassExists || groupAlreadyExists || differentSubjectExists) {
+        setConflictWarning("Bu katakka faqat bitta fan qo'yiladi; sinfni bo'lib o'tkazishda har bir guruhni alohida tanlang.");
+        return;
       }
     }
 
@@ -300,16 +361,35 @@ export default function DirectorDashboard() {
   };
 
   const handleAddClass = async () => {
-    if(!newClassInfo.name) return showToast("Sinf nomini kiriting!", "error");
-    const { error } = await supabase.from('classes').insert([{ name: newClassInfo.name.toUpperCase(), max_limit: newClassInfo.limit }]);
-    if(!error) { showToast("Sinf yaratildi!"); setShowClassModal(false); setNewClassInfo({name: "", limit: 24}); fetchData(); } else showToast(error.message, "error");
+    const name = newClassInfo.name.trim().toUpperCase();
+    if (!name || !Number.isInteger(newClassInfo.limit) || newClassInfo.limit < 1) return showToast("Sinf nomi va o'quvchi limitini to'g'ri kiriting.", "error");
+    if (classes.some((classItem) => classItem.name === name)) return showToast("Bu sinf allaqachon mavjud.", "error");
+    const { error } = await supabase.from("classes").insert([{ name, max_limit: newClassInfo.limit, total_cp: 0 }]);
+    if (error) return showToast(error.message, "error");
+    showToast("Sinf yaratildi.");
+    setShowClassModal(false);
+    setNewClassInfo({ name: "", limit: 24 });
+    await fetchData();
   };
 
   const handleAddTeacher = async () => {
-    if(!newPerson.fullName || !newPerson.subject) return showToast("To'ldiring!", "error");
-    const uniqueId = `T-${Math.floor(1000 + Math.random() * 9000)}`; const pass = generatePassword();
-    const { error } = await supabase.from('profiles').insert([{ id: uniqueId, role: 'teacher', full_name: newPerson.fullName, bio: newPerson.subject, password: pass, homeroom: newPerson.homeroom || null }]);
-    if (!error) { showToast(`Qo'shildi! ID: ${uniqueId}`); setShowTeacherModal(false); setNewPerson({ fullName: "", subject: "", homeroom: "", className: "" }); fetchData(); } else showToast(error.message, "error");
+    const fullName = newPerson.fullName.trim();
+    if (!fullName || !newPerson.subject) return showToast("F.I.SH va fanini kiriting.", "error");
+    const id = generateAccountId("T");
+    const password = generateOneTimePassword();
+    const { error } = await supabase.from("profiles").insert([{
+      id,
+      role: "teacher",
+      full_name: fullName,
+      bio: newPerson.subject,
+      password,
+      homeroom: newPerson.homeroom || null,
+    }]);
+    if (error) return showToast(error.message, "error");
+    setCredentials({ role: "O'qituvchi", id, password });
+    setShowTeacherModal(false);
+    setNewPerson({ fullName: "", subject: "", homeroom: "", className: "" });
+    await fetchData();
   };
 
   const handleUpdateTeacher = async () => {
@@ -322,10 +402,27 @@ export default function DirectorDashboard() {
   };
 
   const handleAddStudent = async () => {
-    if(!newPerson.fullName || !newPerson.className) return showToast("To'ldiring!", "error");
-    const pass = generatePassword(); const id = `S-${Math.floor(1000 + Math.random() * 9000)}`;
-    const { error } = await supabase.from('profiles').insert([{ id, role: 'student', full_name: newPerson.fullName, class_name: newPerson.className, password: pass }]);
-    if(!error) { showToast(`Qo'shildi! ID: ${id}`); setShowStudentModal(false); setNewPerson({ fullName: "", subject: "", homeroom: "", className: "" }); fetchData(); } else showToast(error.message, "error");
+    const fullName = newPerson.fullName.trim();
+    const classItem = classes.find((item) => item.name === newPerson.className);
+    if (!fullName || !classItem) return showToast("F.I.SH va sinfni tanlang.", "error");
+    const classLimit = Number(classItem.max_limit ?? 0);
+    if (classLimit > 0 && getStudentsCount(classItem.name) >= classLimit) return showToast(`${classItem.name} sinfi belgilangan limitga yetgan.`, "error");
+    const id = generateAccountId("S");
+    const password = generateOneTimePassword();
+    const { error } = await supabase.from("profiles").insert([{
+      id,
+      role: "student",
+      full_name: fullName,
+      class_name: classItem.name,
+      password,
+      pp_balance: 0,
+      cp_score: 0,
+    }]);
+    if (error) return showToast(error.message, "error");
+    setCredentials({ role: "O'quvchi", id, password });
+    setShowStudentModal(false);
+    setNewPerson({ fullName: "", subject: "", homeroom: "", className: "" });
+    await fetchData();
   };
 
   const handleUpdateStudent = async () => {
@@ -405,7 +502,9 @@ export default function DirectorDashboard() {
       </aside>
 
       {/* MAIN CONTENT */}
-      <main className="flex-1 overflow-y-auto p-8 lg:p-12 relative z-0">
+      <main className="relative z-0 flex-1 overflow-y-auto p-4 sm:p-6 lg:p-10">
+        {loadError && <div role="alert" className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">{loadError}<button onClick={() => void fetchData()} className="ml-3 underline">Qayta yuklash</button></div>}
+        {isLoading && <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Ma'lumotlar yangilanmoqda...</div>}
         <header className="flex justify-between items-center mb-10">
           <div>
             <h1 className="text-4xl font-black text-slate-900 tracking-tight">Direktor Paneli</h1>
@@ -862,6 +961,24 @@ export default function DirectorDashboard() {
         </div>
       )}
 
+      {credentials && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm" onClick={() => setCredentials(null)}>
+          <section role="dialog" aria-modal="true" aria-labelledby="credentials-title" className="w-full max-w-md rounded-3xl bg-white p-7 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600"><Key className="h-7 w-7" /></div>
+            <h2 id="credentials-title" className="mt-4 text-center text-2xl font-black text-slate-950">{credentials.role} yaratildi</h2>
+            <p className="mt-2 text-center text-sm leading-6 text-slate-500">Kirish ma'lumotlarini foydalanuvchiga xavfsiz yetkazing. Parol bu oynani yopgach qayta ko'rsatilmaydi.</p>
+            <div className="mt-6 space-y-3 rounded-2xl bg-slate-50 p-4">
+              <div><p className="text-xs font-bold uppercase tracking-wide text-slate-400">Shaxsiy ID</p><p className="mt-1 font-mono text-lg font-black text-slate-900">{credentials.id}</p></div>
+              <div><p className="text-xs font-bold uppercase tracking-wide text-slate-400">Vaqtinchalik parol</p><p className="mt-1 break-all font-mono text-lg font-black text-slate-900">{credentials.password}</p></div>
+            </div>
+            <div className="mt-5 flex gap-3">
+              <button onClick={() => { void navigator.clipboard?.writeText(`ID: ${credentials.id}\nParol: ${credentials.password}`).then(() => showToast("Kirish ma'lumotlari nusxalandi.")); }} className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-slate-200 py-3 font-bold text-slate-700 hover:bg-slate-50"><Copy className="h-4 w-4" /> Nusxalash</button>
+              <button onClick={() => setCredentials(null)} className="flex-1 rounded-xl bg-slate-950 py-3 font-black text-white hover:bg-indigo-600">Tayyor</button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {/* MUROJAAT JAVOBI MODALI */}
       {replyModal && (
         <div className="fixed inset-0 bg-slate-950/80 z-50 flex items-center justify-center p-4" onClick={() => setReplyModal(null)}>
@@ -913,8 +1030,12 @@ export default function DirectorDashboard() {
         <div className="fixed inset-0 bg-slate-950/80 z-50 flex items-center justify-center p-4" onClick={() => setShowStudentModal(false)}>
           <div className="bg-white rounded-[3rem] w-full max-w-md shadow-2xl p-8" onClick={e=>e.stopPropagation()}>
             <h3 className="text-xl font-black mb-6">Yangi O'quvchi</h3>
-            <input type="text" placeholder="F.I.SH" className="w-full p-4 bg-slate-100 rounded-2xl font-bold mb-6" value={newPerson.fullName} onChange={e=>setNewPerson({...newPerson, fullName: e.target.value})} />
-            <button onClick={handleAddStudent} className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-black">QO'SHISH</button>
+            <input type="text" placeholder="F.I.SH" className="w-full p-4 bg-slate-100 rounded-2xl font-bold mb-4" value={newPerson.fullName} onChange={e=>setNewPerson({...newPerson, fullName: e.target.value})} />
+            <select className="w-full p-4 bg-slate-100 rounded-2xl font-bold mb-6" value={newPerson.className} onChange={e=>setNewPerson({...newPerson, className: e.target.value})}>
+              <option value="">Sinfni tanlang</option>
+              {classes.map(classItem => <option key={classItem.name} value={classItem.name}>{classItem.name} ({getStudentsCount(classItem.name)}/{classItem.max_limit || "∞"})</option>)}
+            </select>
+            <button onClick={handleAddStudent} disabled={!newPerson.fullName.trim() || !newPerson.className} className="w-full rounded-2xl bg-emerald-600 py-4 font-black text-white disabled:cursor-not-allowed disabled:opacity-50">O'QUVCHINI QO'SHISH</button>
           </div>
         </div>
       )}

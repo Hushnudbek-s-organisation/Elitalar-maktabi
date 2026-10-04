@@ -1,138 +1,90 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { supabase } from "@/lib/supabase";
-import { Trophy, Medal, Star, Loader2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Loader2, Trophy } from "lucide-react";
+import ClassLeaderboard, { type RankedClass } from "@/components/rankings/ClassLeaderboard";
+import { getStoredSession } from "@/lib/session";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import { formatPP } from "@/lib/utils";
+import type { Profile } from "@/types";
 
 export default function StudentRankingPage() {
-  const [student, setStudent] = useState<any>(null);
-  const [parallelClasses, setParallelClasses] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const router = useRouter();
+  const [student, setStudent] = useState<Profile | null>(null);
+  const [classes, setClasses] = useState<RankedClass[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    const fetchRanking = async () => {
-      try {
-        const userId = localStorage.getItem('user_id');
-        if (!userId) return window.location.replace('/');
+    const session = getStoredSession();
+    if (!session.id || session.role !== "student") {
+      router.replace("/");
+      return;
+    }
+    if (!isSupabaseConfigured) {
+      setError("Platforma bazasi sozlanmagan.");
+      setLoading(false);
+      return;
+    }
 
-        // 1. O'quvchini olamiz
-        const { data: profile } = await supabase.from('profiles').select('*').eq('id', userId).single();
-        if (!profile) return;
-        setStudent(profile);
-
-        // 2. O'quvchi sinfidan (masalan "9-A") faqat raqamni (masalan "9") kesib olamiz
-        const gradeMatch = profile.class_name?.match(/^(\d+)/);
-        const gradeNumber = gradeMatch ? gradeMatch[1] : null;
-
-        if (gradeNumber) {
-          // 3. Faqat shu raqam bilan boshlanadigan sinflarni (Parallel sinflarni) chaqiramiz
-          const { data: classes } = await supabase
-            .from('classes')
-            .select('*')
-            .like('name', `${gradeNumber}-%`)
-            .order('total_cp', { ascending: false }); // CP bo'yicha kamayish tartibida
-
-          if (classes) setParallelClasses(classes);
-        }
-      } catch (error) {
-        console.error("Xatolik:", error);
-      } finally {
-        setIsLoading(false);
+    let active = true;
+    const load = async () => {
+      const { data: profile, error: profileError } = await supabase.from("profiles").select("id, full_name, role, class_name, cp_score").eq("id", session.id).maybeSingle();
+      if (!active) return;
+      if (profileError || !profile || profile.role !== "student") {
+        setError("Profilni yuklab bo'lmadi.");
+        setLoading(false);
+        return;
       }
+      setStudent(profile as Profile);
+      const grade = profile.class_name?.match(/^(\d+)/)?.[1];
+      if (!grade) {
+        setLoading(false);
+        return;
+      }
+      const { data, error: classesError } = await supabase
+        .from("classes")
+        .select("name, total_cp, homeroom_teacher")
+        .like("name", `${grade}-%`)
+        .order("total_cp", { ascending: false });
+      if (!active) return;
+      if (classesError) setError("Sinf reytingini yuklab bo'lmadi.");
+      else setClasses((data ?? []) as RankedClass[]);
+      setLoading(false);
     };
+    void load().catch((loadError) => {
+      console.error(loadError);
+      if (active) {
+        setError("Reyting ma'lumotlarini yuklashda xatolik yuz berdi.");
+        setLoading(false);
+      }
+    });
+    return () => { active = false; };
+  }, [router]);
 
-    fetchRanking();
-  }, []);
+  const currentRank = useMemo(() => classes.findIndex((item) => item.name === student?.class_name) + 1, [classes, student?.class_name]);
+  if (loading) return <div className="flex min-h-[50vh] items-center justify-center"><Loader2 className="h-9 w-9 animate-spin text-blue-600" /></div>;
+  if (error || !student) return <div className="mx-auto max-w-xl rounded-3xl border border-slate-200 bg-white p-8 text-center"><p className="font-bold text-slate-900">Reytingni ochib bo'lmadi</p><p className="mt-2 text-sm text-slate-500">{error || "Qayta kirib ko'ring."}</p></div>;
 
-  if (isLoading) return <div className="flex h-full items-center justify-center"><Loader2 className="w-10 h-10 text-blue-500 animate-spin"/></div>;
-  if (!student) return null;
-
-  // Parallelni aniqlash (Masalan "9")
-  const gradeMatch = student.class_name?.match(/^(\d+)/);
-  const gradeNumber = gradeMatch ? gradeMatch[1] : "?";
-
+  const grade = student.class_name?.match(/^(\d+)/)?.[1] || "—";
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
-      
-      {/* HEADER */}
-      <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-3xl p-10 text-white shadow-xl relative overflow-hidden">
-         <div className="absolute top-0 right-0 p-8 opacity-10"><Trophy className="w-48 h-48" /></div>
-         <div className="relative z-10">
-            <h1 className="text-4xl font-black mb-2 tracking-tighter">Sinflar Reytingi</h1>
-            <p className="text-blue-100 font-medium">Bu yerda faqat {gradeNumber}-sinflar o'rtasidagi raqobat ko'rsatilgan.</p>
-         </div>
-      </div>
+    <div className="mx-auto max-w-5xl space-y-6 animate-in fade-in slide-in-from-bottom-4">
+      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-indigo-700 to-blue-600 p-6 text-white shadow-lg shadow-indigo-900/10 sm:p-8">
+        <Trophy className="absolute -right-4 -top-4 h-44 w-44 opacity-10" />
+        <div className="relative flex flex-col justify-between gap-6 sm:flex-row sm:items-end">
+          <div><p className="inline-flex rounded-full bg-white/15 px-3 py-1.5 text-xs font-black uppercase tracking-wider">{grade}-sinflar o'rtasida</p><h1 className="mt-3 text-3xl font-black sm:text-4xl">Sinf reytingi</h1><p className="mt-2 text-sm text-blue-100">Eng yuqori CP jamg'argan sinflar yetakchilik qiladi.</p></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3"><p className="text-xs font-semibold text-blue-100">Sinfingiz</p><p className="mt-1 text-xl font-black">{student.class_name || "—"}</p></div>
+            <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3"><p className="text-xs font-semibold text-blue-100">O'rningiz</p><p className="mt-1 text-xl font-black">{currentRank > 0 ? `${currentRank}-o'rin` : "—"}</p></div>
+          </div>
+        </div>
+      </section>
 
-      {/* REYTING JADVALI */}
-      <div className="bg-[#131B2F] border border-slate-800 rounded-3xl shadow-lg overflow-hidden">
-         <div className="p-6 border-b border-slate-800 bg-[#0f172a]">
-            <h2 className="text-xl font-black text-white flex items-center">
-              <Star className="w-5 h-5 text-amber-500 mr-3"/> {gradeNumber}-Sinflar Chempionati
-            </h2>
-         </div>
-
-         <div className="p-2 md:p-6">
-            {parallelClasses.length === 0 ? (
-              <div className="text-center py-10 text-slate-500 font-bold">Hech qanday ma'lumot topilmadi.</div>
-            ) : (
-              <div className="space-y-3">
-                {parallelClasses.map((cls, index) => {
-                  const isMyClass = cls.name === student.class_name;
-                  
-                  // O'rinlarga qarab rang va ikonka
-                  let rankColor = "text-slate-400 bg-slate-800/50";
-                  let rankIcon = <span className="font-black text-lg">{index + 1}</span>;
-
-                  if (index === 0) {
-                    rankColor = "text-amber-500 bg-amber-500/10 border-amber-500/30";
-                    rankIcon = <Trophy className="w-6 h-6" />;
-                  } else if (index === 1) {
-                    rankColor = "text-slate-300 bg-slate-300/10 border-slate-300/30";
-                    rankIcon = <Medal className="w-6 h-6" />;
-                  } else if (index === 2) {
-                    rankColor = "text-amber-700 bg-amber-900/20 border-amber-800/30";
-                    rankIcon = <Medal className="w-6 h-6" />;
-                  }
-
-                  return (
-                    <div 
-                      key={cls.id} 
-                      className={`flex items-center justify-between p-4 md:p-6 rounded-2xl border transition-all ${
-                        isMyClass 
-                          ? 'bg-blue-600/10 border-blue-500/50 shadow-[0_0_15px_rgba(59,130,246,0.1)]' 
-                          : 'bg-[#0B1121] border-slate-800/80 hover:border-slate-700'
-                      }`}
-                    >
-                      <div className="flex items-center gap-4 md:gap-6">
-                        {/* O'rin */}
-                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center border ${rankColor}`}>
-                          {rankIcon}
-                        </div>
-                        
-                        {/* Sinf nomi va Rahbar */}
-                        <div>
-                          <h3 className={`text-xl font-black ${isMyClass ? 'text-blue-400' : 'text-white'}`}>
-                            {cls.name} {isMyClass && <span className="ml-2 text-xs font-bold bg-blue-600 text-white px-2 py-0.5 rounded-md uppercase">Sizning sinfingiz</span>}
-                          </h3>
-                          <p className="text-sm text-slate-500 mt-1 font-medium hidden md:block">Sinf rahbari: {cls.homeroom_teacher || "Kiritilmagan"}</p>
-                        </div>
-                      </div>
-
-                      {/* Ball */}
-                      <div className="text-right flex-shrink-0">
-                         <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mb-1">Jami Ball (CP)</p>
-                         <p className={`text-2xl md:text-3xl font-black ${index === 0 ? 'text-amber-500' : 'text-emerald-400'}`}>
-                           {cls.total_cp || 0}
-                         </p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-         </div>
-      </div>
-
+      <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
+        <div className="mb-5 flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-slate-950">{grade}-sinflar chempionati</h2><p className="mt-1 text-sm text-slate-500">Sinf bo'yicha jamlangan CP ballari</p></div><div className="rounded-2xl bg-amber-50 px-4 py-2 text-right"><p className="text-xs font-bold text-amber-700">Sizning balingiz</p><p className="font-black text-amber-950">{formatPP(student.cp_score)} CP</p></div></div>
+        <ClassLeaderboard classes={classes} currentClass={student.class_name} />
+      </section>
     </div>
   );
 }

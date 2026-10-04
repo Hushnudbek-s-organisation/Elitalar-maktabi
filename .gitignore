@@ -1,0 +1,19 @@
+# Dependencies and generated output
+node_modules/
+.next/
+.turbo/
+coverage/
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Local environment files (keep only the template in Git)
+.env
+.env.*
+!.env.example
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/

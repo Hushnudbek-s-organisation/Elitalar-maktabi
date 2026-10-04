@@ -1,6 +1,20 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const configuredUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+const configuredAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const isSupabaseConfigured = Boolean(configuredUrl && configuredAnonKey);
+
+// Keep imports safe in builds and local previews without environment variables. Pages
+// check `isSupabaseConfigured` and show a useful setup message before making requests.
+export const supabase = createClient(
+  configuredUrl || "https://missing-project.supabase.co",
+  configuredAnonKey || "missing-anon-key",
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  },
+);

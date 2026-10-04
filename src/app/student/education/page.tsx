@@ -1,170 +1,113 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { supabase } from "@/lib/supabase";
-import { BookOpen, Calendar, GraduationCap, Award, Loader2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { BookOpenCheck, CalendarDays, ClipboardList, Loader2, Search } from "lucide-react";
+import { getStoredSession } from "@/lib/session";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import { formatDateUz } from "@/lib/utils";
+import type { Homework, Profile } from "@/types";
 
 export default function EducationPage() {
-  const [student, setStudent] = useState<any>(null);
-  const [timetable, setTimetable] = useState<any[]>([]);
-  const [homeworks, setHomeworks] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<"jadval" | "vazifa">("jadval");
-  const [isLoading, setIsLoading] = useState(true);
-
-  // Kunlar ro'yxati (xatosiz va tartibli chiqishi uchun)
-  const DAYS = ['Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba'];
+  const router = useRouter();
+  const [student, setStudent] = useState<Profile | null>(null);
+  const [homeworks, setHomeworks] = useState<Homework[]>([]);
+  const [search, setSearch] = useState("");
+  const [subject, setSubject] = useState("all");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const userId = localStorage.getItem('user_id');
-        if (!userId) return window.location.replace('/');
+    const session = getStoredSession();
+    if (!session.id || session.role !== "student") {
+      router.replace("/");
+      return;
+    }
+    if (!isSupabaseConfigured) {
+      setError("Platforma bazasi sozlanmagan.");
+      setLoading(false);
+      return;
+    }
 
-        // O'quvchini olish
-        const { data: profile } = await supabase.from('profiles').select('*').eq('id', userId).single();
-        if (!profile) return;
-        setStudent(profile);
-
-        // Dars jadvalini olish va dars soati bo'yicha tartiblash
-        const { data: schedule } = await supabase
-          .from('timetable')
-          .select('*')
-          .eq('class_name', profile.class_name)
-          .order('lesson_number', { ascending: true });
-        
-        if (schedule) setTimetable(schedule);
-
-        // Uy vazifalarini olish
-        const { data: hw } = await supabase
-          .from('homeworks')
-          .select('*')
-          .eq('class_name', profile.class_name)
-          .order('date', { ascending: false });
-        
-        if (hw) setHomeworks(hw);
-
-      } catch (error) {
-        console.error("Xatolik:", error);
-      } finally {
-        setIsLoading(false);
+    let active = true;
+    const load = async () => {
+      const { data: profile, error: profileError } = await supabase.from("profiles").select("id, full_name, role, class_name").eq("id", session.id).maybeSingle();
+      if (!active) return;
+      if (profileError || !profile || profile.role !== "student") {
+        setError("Profilni yuklab bo'lmadi. Qayta kirib ko'ring.");
+        setLoading(false);
+        return;
       }
+      setStudent(profile as Profile);
+      const { data, error: homeworkError } = await supabase
+        .from("homeworks")
+        .select("id, class_name, subject, topic, description, deadline, date")
+        .eq("class_name", profile.class_name || "")
+        .order("date", { ascending: false })
+        .limit(100);
+      if (!active) return;
+      if (homeworkError) setError("Uy vazifalarini yuklab bo'lmadi.");
+      else setHomeworks((data ?? []) as Homework[]);
+      setLoading(false);
     };
+    void load().catch((loadError) => {
+      console.error(loadError);
+      if (active) {
+        setError("Ta'lim ma'lumotlarini yuklashda xatolik yuz berdi.");
+        setLoading(false);
+      }
+    });
+    return () => { active = false; };
+  }, [router]);
 
-    fetchData();
-  }, []);
+  const subjects = useMemo(() => [...new Set(homeworks.map((item) => item.subject).filter(Boolean))].sort((a, b) => a.localeCompare(b, "uz")), [homeworks]);
+  const visibleHomeworks = useMemo(() => homeworks.filter((item) => {
+    const matchesSubject = subject === "all" || item.subject === subject;
+    const haystack = `${item.subject} ${item.topic ?? ""} ${item.description ?? ""}`.toLocaleLowerCase("uz-UZ");
+    return matchesSubject && haystack.includes(search.trim().toLocaleLowerCase("uz-UZ"));
+  }), [homeworks, search, subject]);
 
-  if (isLoading) return <div className="flex h-full items-center justify-center"><Loader2 className="w-10 h-10 text-blue-500 animate-spin"/></div>;
-  if (!student) return null;
+  if (loading) return <div className="flex min-h-[50vh] items-center justify-center"><Loader2 className="h-9 w-9 animate-spin text-blue-600" /></div>;
+  if (error || !student) return <div className="mx-auto max-w-xl rounded-3xl border border-slate-200 bg-white p-8 text-center"><p className="font-bold text-slate-900">Ta'lim ma'lumotlarini ochib bo'lmadi</p><p className="mt-2 text-sm text-slate-500">{error || "Qayta kirib ko'ring."}</p></div>;
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
-      
-      {/* YUQORI PROFIL KARTASI (Rasmdagidek) */}
-      <div className="bg-[#131B2F] border border-slate-800 rounded-3xl p-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 shadow-lg">
-         <div>
-            <p className="text-blue-500 font-black text-xs uppercase tracking-widest mb-1">O'quvchi Paneli</p>
-            <h1 className="text-3xl font-black text-white mb-3">{student.full_name}</h1>
-            <span className="bg-slate-800 text-slate-300 px-4 py-2 rounded-xl text-sm font-bold flex items-center w-fit border border-slate-700">
-              <GraduationCap className="w-4 h-4 mr-2"/> Sinf: {student.class_name}
-            </span>
-         </div>
-         <div className="flex gap-4">
-            <div className="bg-slate-800/50 border border-slate-700 p-4 rounded-2xl text-center min-w-[120px]">
-               <p className="text-slate-400 text-xs font-bold uppercase mb-1">Balans (PP)</p>
-               <p className="text-2xl font-black text-amber-500 flex items-center justify-center"><Award className="w-5 h-5 mr-1"/> {student.pp_balance || 0}</p>
+    <div className="mx-auto max-w-5xl space-y-6 animate-in fade-in slide-in-from-bottom-4">
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+        <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+          <div><p className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-black uppercase tracking-wide text-emerald-700"><BookOpenCheck className="h-4 w-4" /> Ta'lim bo'limi</p><h1 className="mt-3 text-3xl font-black tracking-tight text-slate-950">Uy vazifalari</h1><p className="mt-1 text-sm text-slate-500">{student.class_name || "Sinf"} sinfi uchun berilgan topshiriqlar.</p></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-2xl bg-blue-50 px-4 py-3"><p className="text-xs font-bold text-blue-600">Jami vazifa</p><p className="mt-1 text-xl font-black text-blue-950">{homeworks.length}</p></div>
+            <div className="rounded-2xl bg-emerald-50 px-4 py-3"><p className="text-xs font-bold text-emerald-700">Fanlar</p><p className="mt-1 text-xl font-black text-emerald-950">{subjects.length}</p></div>
+          </div>
+        </div>
+      </section>
+
+      <section className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:flex-row">
+        <div className="relative flex-1"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><label className="sr-only" htmlFor="homework-search">Vazifalarni qidirish</label><input id="homework-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Fan yoki mavzu bo'yicha qidirish..." className="w-full rounded-xl bg-slate-50 py-3 pl-10 pr-4 text-sm outline-none focus:ring-2 focus:ring-blue-500/20" /></div>
+        <label className="sr-only" htmlFor="subject-filter">Fan bo'yicha filter</label><select id="subject-filter" value={subject} onChange={(event) => setSubject(event.target.value)} className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none focus:border-blue-500"><option value="all">Barcha fanlar</option>{subjects.map((item) => <option key={item} value={item}>{item}</option>)}</select>
+      </section>
+
+      <div className="space-y-3">
+        {visibleHomeworks.length ? visibleHomeworks.map((item) => (
+          <article key={item.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-blue-200 hover:shadow-md sm:p-6">
+            <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+              <div className="flex min-w-0 gap-4">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-600"><ClipboardList className="h-5 w-5" /></span>
+                <div className="min-w-0"><p className="text-xs font-black uppercase tracking-wider text-blue-600">{item.subject}</p><h2 className="mt-1 text-lg font-black text-slate-950">{item.topic || "Mavzu belgilanmagan"}</h2><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">{item.description || "Qo'shimcha topshiriq kiritilmagan."}</p></div>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2 sm:flex-col sm:items-end">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-600"><CalendarDays className="h-3.5 w-3.5" />{formatDateUz(item.date)}</span>
+                {item.deadline && <span className="rounded-full bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-700">Muddat: {item.deadline}</span>}
+              </div>
             </div>
-            <div className="bg-slate-800/50 border border-slate-700 p-4 rounded-2xl text-center min-w-[120px]">
-               <p className="text-slate-400 text-xs font-bold uppercase mb-1">Reyting (CP)</p>
-               <p className="text-2xl font-black text-emerald-400 flex items-center justify-center">📈 {student.cp_score || 0}</p>
-            </div>
-         </div>
-      </div>
-
-      {/* ASOSIY KONTENT */}
-      <div className="bg-[#131B2F] border border-slate-800 rounded-3xl p-6 md:p-8 shadow-lg min-h-[500px]">
-         
-         {/* TABLAR */}
-         <div className="flex border-b border-slate-800 mb-8">
-            <button 
-              onClick={() => setActiveTab('vazifa')}
-              className={`flex items-center px-6 py-4 font-bold transition-all border-b-2 ${activeTab === 'vazifa' ? 'border-blue-500 text-blue-500' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
-            >
-               <BookOpen className="w-5 h-5 mr-2"/> Uy vazifasi
-            </button>
-            <button 
-              onClick={() => setActiveTab('jadval')}
-              className={`flex items-center px-6 py-4 font-bold transition-all border-b-2 ${activeTab === 'jadval' ? 'border-blue-500 text-blue-500' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
-            >
-               <Calendar className="w-5 h-5 mr-2"/> Dars jadvali
-            </button>
-         </div>
-
-         {/* DARS JADVALI KO'RINISHi */}
-         {activeTab === 'jadval' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-               {DAYS.map(day => {
-                 // Shu kunga tegishli darslarni ajratib olamiz
-                 const dayLessons = timetable.filter(t => t.day_of_week?.toLowerCase() === day.toLowerCase());
-                 
-                 // Agar bu kunda dars bo'lmasa, uni ko'rsatmaymiz
-                 if (dayLessons.length === 0) return null;
-
-                 return (
-                   <div key={day} className="bg-[#0B1121] rounded-2xl p-6 border border-slate-800/80 shadow-inner">
-                     <h3 className="text-blue-500 font-black text-sm uppercase tracking-widest mb-4 border-b border-slate-800 pb-3">
-                       {day}
-                     </h3>
-                     <ul className="space-y-4">
-                        {dayLessons.map(lesson => (
-                          <li key={lesson.id} className="flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                              <span className="w-6 h-6 rounded-lg bg-slate-800 text-slate-400 flex items-center justify-center font-bold text-xs">
-                                {lesson.lesson_number}
-                              </span>
-                              <span className="font-bold text-slate-200">{lesson.subject}</span>
-                            </div>
-                            {lesson.room && (
-                              <span className="text-[10px] font-bold bg-slate-800/80 text-slate-500 px-2 py-1 rounded border border-slate-700">
-                                {lesson.room} xona
-                              </span>
-                            )}
-                          </li>
-                        ))}
-                     </ul>
-                   </div>
-                 );
-               })}
-               {timetable.length === 0 && (
-                 <div className="col-span-full py-10 text-center text-slate-500 font-bold">
-                   Dars jadvali hali tizimga kiritilmagan.
-                 </div>
-               )}
-            </div>
-         )}
-
-         {/* UY VAZIFASI KO'RINISHi */}
-         {activeTab === 'vazifa' && (
-            <div className="space-y-4">
-               {homeworks.length > 0 ? homeworks.map(hw => (
-                 <div key={hw.id} className="bg-[#0B1121] p-6 rounded-2xl border border-slate-800/80 flex flex-col md:flex-row justify-between gap-4">
-                    <div>
-                       <h4 className="text-lg font-black text-white">{hw.subject}</h4>
-                       <p className="text-slate-400 font-medium mt-1">{hw.topic}</p>
-                       <p className="text-sm text-slate-500 mt-2 bg-slate-800/50 p-3 rounded-xl border border-slate-800/50"> Vazifa: {hw.description}</p>
-                    </div>
-                    <div className="text-right flex-shrink-0">
-                       <span className="inline-block bg-blue-500/10 text-blue-400 border border-blue-500/20 px-3 py-1 rounded-lg text-xs font-bold mb-2">Muddat: {hw.deadline}</span>
-                       <p className="text-xs text-slate-500 font-bold">Berilgan sana: {hw.date}</p>
-                    </div>
-                 </div>
-               )) : (
-                 <div className="py-10 text-center text-slate-500 font-bold">
-                   Hozircha uy vazifalari yo'q.
-                 </div>
-               )}
-            </div>
-         )}
-
+          </article>
+        )) : (
+          <div className="rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-400"><BookOpenCheck className="h-7 w-7" /></div>
+            <h2 className="mt-4 text-lg font-black text-slate-900">{homeworks.length ? "Mos vazifa topilmadi" : "Hozircha uy vazifalari yo'q"}</h2>
+            <p className="mt-2 text-sm text-slate-500">{homeworks.length ? "Qidiruv so'zini yoki fan filterini o'zgartirib ko'ring." : "O'qituvchi vazifa joylaganda shu sahifada ko'rinadi."}</p>
+          </div>
+        )}
       </div>
     </div>
   );
