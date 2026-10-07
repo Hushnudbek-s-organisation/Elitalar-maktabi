@@ -1,28 +1,25 @@
 import type { Metadata, Viewport } from "next";
-import "./globals.css";
 import { Toaster } from "sonner";
+import "./globals.css";
 
 export const metadata: Metadata = {
-  title: {
-    default: "ELITA | Maktab platformasi",
-    template: "%s | ELITA",
-  },
-  description: "ELITA maktabining ta'lim, aloqa va o'quvchi yutuqlari platformasi.",
-  applicationName: "ELITA eMaktab",
+  title: "SchoolOS — Maktab boshqaruv tizimi",
+  description:
+    "O'zbekiston maktablari uchun zamonaviy boshqaruv platformasi: jurnal, davomat, baholar, dars jadvali, ota-onalar bilan aloqa.",
 };
 
 export const viewport: Viewport = {
-  themeColor: "#f5f8ff",
   width: "device-width",
   initialScale: 1,
+  themeColor: "#4f46e5",
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="uz">
-      <body className="min-h-screen bg-slate-50 text-slate-900 antialiased">
+      <body>
         {children}
-        <Toaster position="top-right" richColors closeButton />
+        <Toaster richColors position="top-center" />
       </body>
     </html>
   );

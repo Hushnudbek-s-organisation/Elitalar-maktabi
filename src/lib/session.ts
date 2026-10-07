@@ -1,37 +1,88 @@
-import type { UserRole } from "@/types";
+"use client";
 
-export const SESSION_KEYS = ["user_id", "user_role", "student_id", "teacher_id", "user_name"] as const;
+// ============================================================================
+// SchoolOS — demo sessiya (zustand + localStorage).
+// Supabase Auth ulanganda: replaceSession() real JWT profil bilan ishlaydi.
+// ============================================================================
 
-export interface StoredSession {
-  id: string | null;
-  role: UserRole | null;
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
+import type { Role } from "@/types/demo";
+
+export interface DemoAccount {
+  id: string;
+  name: string;
+  role: Role;
+  email: string;
+  teacherId?: string; // o'qituvchi uchun
+  homeroomClassId?: string; // sinf rahbari uchun
+  studentId?: string; // o'quvchi uchun
+  childStudentIds?: string[]; // ota-ona uchun
 }
 
-export function getStoredSession(): StoredSession {
-  if (typeof window === "undefined") return { id: null, role: null };
-  const id = localStorage.getItem("user_id") || localStorage.getItem("student_id") || localStorage.getItem("teacher_id");
-  const rawRole = localStorage.getItem("user_role")?.trim().toLowerCase();
-  const role = rawRole === "moderator" ? "teacher" : rawRole;
-  return { id, role: role as UserRole | null };
+export const DEMO_ACCOUNTS: DemoAccount[] = [
+  {
+    id: "director",
+    name: "Abdullayev Rustam Ismoilovich",
+    role: "DIRECTOR",
+    email: "director@demo.school.uz",
+  },
+  {
+    id: "admin",
+    name: "Xolmatova Nodira Islomovna",
+    role: "ADMIN",
+    email: "admin@demo.school.uz",
+  },
+  {
+    id: "hakimov",
+    name: "Hakimov Hushnudbek Alisherovich",
+    role: "CLASS_TEACHER",
+    email: "hakimov@demo.school.uz",
+    teacherId: "t1",
+    homeroomClassId: "c10a",
+  },
+  {
+    id: "karimova",
+    name: "Karimova Dilnoza Anvarovna",
+    role: "TEACHER",
+    email: "karimova@demo.school.uz",
+    teacherId: "t2",
+  },
+  {
+    id: "parent1",
+    name: "Olimova Nilufar Anvarovna",
+    role: "PARENT",
+    email: "parent1@demo.school.uz",
+    childStudentIds: ["s01", "s25"],
+  },
+  {
+    id: "student1",
+    name: "Olimov Jasur Alisherovich",
+    role: "STUDENT",
+    email: "student1@demo.school.uz",
+    studentId: "s01",
+  },
+];
+
+interface SessionState {
+  account: DemoAccount | null;
+  login: (account: DemoAccount) => void;
+  logout: () => void;
 }
 
-export function storeSession(id: string, role: UserRole, fullName?: string) {
-  localStorage.setItem("user_id", id);
-  localStorage.setItem("user_role", role === "admin" ? "director" : role);
-  localStorage.setItem("user_name", fullName ?? "");
-  if (role === "student") localStorage.setItem("student_id", id);
-  else localStorage.removeItem("student_id");
-  if (role === "teacher") localStorage.setItem("teacher_id", id);
-  else localStorage.removeItem("teacher_id");
-}
+export const useSession = create<SessionState>()(
+  persist(
+    (set) => ({
+      account: null,
+      login: (account) => set({ account }),
+      logout: () => set({ account: null }),
+    }),
+    { name: "schoolos-demo-session" },
+  ),
+);
 
-export function clearSession() {
-  SESSION_KEYS.forEach((key) => localStorage.removeItem(key));
-}
+export const isStaff = (role: Role): boolean =>
+  role === "DIRECTOR" || role === "ADMIN" || role === "CLASS_TEACHER" || role === "TEACHER";
 
-export function getDashboardPath(role: UserRole): string | null {
-  if (role === "student") return "/student/dashboard";
-  if (role === "teacher") return "/teacher/dashboard";
-  if (role === "director" || role === "admin") return "/director/dashboard";
-  return null;
-}
+export const isAdmin = (role: Role): boolean =>
+  role === "DIRECTOR" || role === "ADMIN";

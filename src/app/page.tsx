@@ -1,162 +1,170 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { AlertTriangle, ArrowRight, BookOpen, Eye, EyeOff, GraduationCap, Loader2, ShieldCheck, Sparkles } from "lucide-react";
-import { getDashboardPath, storeSession } from "@/lib/session";
-import { isSupabaseConfigured } from "@/lib/supabase";
-import { useAuth } from "@/store/useAuth";
+import Link from "next/link";
+import {
+  ArrowRight,
+  BookOpenCheck,
+  CalendarDays,
+  GraduationCap,
+  Megaphone,
+  MessageSquareHeart,
+  Search,
+  ShieldCheck,
+  Sparkles,
+  Users,
+  Zap,
+} from "lucide-react";
+import { t } from "@/lib/i18n";
 
-export default function MainLogin() {
-  const router = useRouter();
-  const login = useAuth((state) => state.login);
-  const loading = useAuth((state) => state.loading);
-  const error = useAuth((state) => state.error);
-  const [id, setId] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
+const FEATURES = [
+  {
+    icon: BookOpenCheck,
+    title: "Bir teginish bilan davomat",
+    text: "30 o'quvchini 10 soniyada belgilang — «HAMMASI KELDI» tugmasi bilan. Jurnal oflaynda ham ishlaydi.",
+  },
+  {
+    icon: Search,
+    title: "3 soniyada topish",
+    text: "Ctrl+K global qidiruv: o'quvchi, o'qituvchi, sinf — bir joyda. Boshqaruv harakati 3 bosishdan oshmaydi.",
+  },
+  {
+    icon: CalendarDays,
+    title: "Aqlli dars jadvali",
+    text: "Konfliktlarni o'zi topadigan jadval generatori. Har bir muvaffaqiyatsizlik sababi bilan izohlanadi.",
+  },
+  {
+    icon: Megaphone,
+    title: "Telegram birinchi",
+    text: "Ota-onalarga xabarlar Telegram va push orqali, yetkazilganlik holati va qayta urinish bilan.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Xavfsizlik birinchi",
+    text: "Har bir jadval RLS bilan himoyalangan. O'qituvchi faqat o'z sinflarini, ota-ona faqat farzandini ko'radi.",
+  },
+  {
+    icon: MessageSquareHeart,
+    title: "Ogohlantirishlar sabab bilan",
+    text: "Risk dvigateli har bir ogohlantirishni izohlaydi: nechta sababsiz qoldirildi, baho qanday tushdi.",
+  },
+];
 
-  const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const result = await login(id, password);
-    if (!result.success || !result.role) return;
-
-    const user = useAuth.getState().user;
-    storeSession(user?.id ?? id.trim().toUpperCase(), result.role, user?.full_name);
-    const path = getDashboardPath(result.role);
-    if (path) router.replace(path);
-  };
-
+export default function LandingPage() {
   return (
-    <main className="login-shell relative min-h-screen overflow-hidden px-4 py-8 sm:px-6 lg:px-10">
-      <div className="login-orb login-orb-one" aria-hidden="true" />
-      <div className="login-orb login-orb-two" aria-hidden="true" />
+    <div className="min-h-screen bg-white">
+      {/* Nav */}
+      <header className="sticky top-0 z-30 border-b border-slate-100 bg-white/80 backdrop-blur">
+        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md shadow-indigo-500/30">
+              <GraduationCap className="h-5 w-5" />
+            </span>
+            <span className="text-lg font-bold text-slate-900">SchoolOS</span>
+          </div>
+          <Link
+            href="/login"
+            className="inline-flex h-10 items-center gap-2 rounded-xl bg-indigo-600 px-5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition-colors hover:bg-indigo-700"
+          >
+            {t("login.enter")}
+            <ArrowRight className="h-4 w-4" />
+          </Link>
+        </div>
+      </header>
 
-      <div className="relative z-10 mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-6xl flex-col">
-        <header className="flex items-center justify-between py-2">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-600/25">
-              <BookOpen className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-sm font-black tracking-[0.2em] text-slate-900">ELITA</p>
-              <p className="text-xs font-semibold text-slate-500">Maktab platformasi</p>
+      {/* Hero */}
+      <section className="relative overflow-hidden">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(60%_50%_at_50%_0%,#eef2ff,transparent)]" />
+        <div className="relative mx-auto max-w-6xl px-4 pb-20 pt-16 text-center sm:px-6 sm:pt-24">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
+            <Sparkles className="h-3.5 w-3.5" />
+            O'zbekiston maktablari uchun
+          </span>
+          <h1 className="mx-auto mt-5 max-w-3xl text-4xl font-extrabold leading-tight tracking-tight text-slate-900 sm:text-6xl">
+            Maktab boshqaruvining{" "}
+            <span className="bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">
+              yangi davri
+            </span>
+          </h1>
+          <p className="mx-auto mt-5 max-w-2xl text-base leading-relaxed text-slate-500 sm:text-lg">
+            Jurnal, davomat, baholar, dars jadvali va ota-onalar bilan aloqa — barchasi bir
+            tizimda. Tez, tushunarli va xavfsiz. eMaktab'dagi barcha kerakli funksiyalar —
+            lekin oddiylashtirilgan va avtomatlashtirilgan.
+          </p>
+          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <Link
+              href="/login"
+              className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-8 text-base font-semibold text-white shadow-lg shadow-indigo-600/25 transition-colors hover:bg-indigo-700 sm:w-auto"
+            >
+              Demoni ko'rish
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+            <div className="flex items-center gap-5 text-sm text-slate-500">
+              <span className="inline-flex items-center gap-1.5">
+                <Zap className="h-4 w-4 text-amber-500" /> 34 o'quvchi
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <Users className="h-4 w-4 text-sky-500" /> 6 rol
+              </span>
             </div>
           </div>
-          <span className="hidden items-center gap-2 rounded-full border border-slate-200 bg-white/70 px-3 py-2 text-xs font-bold text-slate-600 shadow-sm sm:inline-flex">
-            <ShieldCheck className="h-4 w-4 text-emerald-600" /> Xavfsiz kirish
-          </span>
-        </header>
-
-        <div className="grid flex-1 items-center gap-10 py-10 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:py-14">
-          <section className="hidden lg:block">
-            <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-4 py-2 text-sm font-bold text-blue-700">
-              <Sparkles className="h-4 w-4" /> Ta'lim, aloqa va yutuqlar — bir joyda
-            </div>
-            <h1 className="max-w-xl text-5xl font-black leading-[1.08] tracking-tight text-slate-950 xl:text-6xl">
-              Maktab hayoti <span className="text-blue-600">yangi bosqichda.</span>
-            </h1>
-            <p className="mt-6 max-w-lg text-lg leading-8 text-slate-600">
-              ELITA orqali dars jadvalingiz, uy vazifalari, sinf reytingi va maktab hamyonini qulay boshqaring.
-            </p>
-            <div className="mt-10 grid max-w-lg grid-cols-2 gap-3">
-              {[
-                { icon: GraduationCap, label: "Ta'lim va jadval" },
-                { icon: ShieldCheck, label: "Shaxsiy kabinet" },
-              ].map(({ icon: Icon, label }) => (
-                <div key={label} className="flex items-center gap-3 rounded-2xl border border-white bg-white/75 p-4 shadow-sm backdrop-blur">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600"><Icon className="h-5 w-5" /></span>
-                  <span className="text-sm font-bold text-slate-700">{label}</span>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="mx-auto w-full max-w-[460px]">
-            <div className="rounded-[2rem] border border-white/80 bg-white/95 p-6 shadow-[0_28px_90px_-36px_rgba(15,23,42,0.3)] backdrop-blur-xl sm:p-9">
-              <div className="mb-8">
-                <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 lg:hidden">
-                  <GraduationCap className="h-7 w-7" />
-                </div>
-                <p className="text-xs font-black uppercase tracking-[0.22em] text-blue-600">Xush kelibsiz</p>
-                <h2 className="mt-2 text-3xl font-black tracking-tight text-slate-950">Tizimga kirish</h2>
-                <p className="mt-2 text-sm leading-6 text-slate-500">Maktab bergan shaxsiy ID va parolingizni kiriting.</p>
-              </div>
-
-              {!isSupabaseConfigured && (
-                <div role="status" className="mb-5 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                  <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-                  <span>Platforma bazasi sozlanmagan. Administrator <code className="rounded bg-amber-100 px-1">.env.local</code> faylini to'ldirishi kerak.</span>
-                </div>
-              )}
-
-              {error && (
-                <div role="alert" className="mb-5 flex items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-700">
-                  <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-                  <span>{error}</span>
-                </div>
-              )}
-
-              <form onSubmit={handleLogin} className="space-y-5">
-                <div>
-                  <label htmlFor="login-id" className="mb-2 block text-sm font-bold text-slate-700">Shaxsiy ID raqam</label>
-                  <input
-                    id="login-id"
-                    name="username"
-                    autoComplete="username"
-                    type="text"
-                    required
-                    maxLength={40}
-                    placeholder="Masalan: S-8392"
-                    value={id}
-                    onChange={(event) => setId(event.target.value)}
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 font-mono text-base font-bold uppercase text-slate-900 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="login-password" className="mb-2 block text-sm font-bold text-slate-700">Parol</label>
-                  <div className="relative">
-                    <input
-                      id="login-password"
-                      name="password"
-                      autoComplete="current-password"
-                      type={showPassword ? "text" : "password"}
-                      required
-                      maxLength={128}
-                      placeholder="Parolingizni kiriting"
-                      value={password}
-                      onChange={(event) => setPassword(event.target.value)}
-                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 pr-12 text-base text-slate-900 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
-                    />
-                    <button
-                      type="button"
-                      aria-label={showPassword ? "Parolni yashirish" : "Parolni ko'rsatish"}
-                      onClick={() => setShowPassword((visible) => !visible)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-xl p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
-                    >
-                      {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                    </button>
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={loading || !isSupabaseConfigured}
-                  className="group flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-4 text-sm font-black text-white shadow-lg shadow-slate-950/10 transition hover:bg-blue-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-55"
-                >
-                  {loading ? <><Loader2 className="h-5 w-5 animate-spin" /> Tekshirilmoqda...</> : <>Kirish <ArrowRight className="h-4 w-4 transition group-hover:translate-x-1" /></>}
-                </button>
-              </form>
-
-              <div className="mt-7 border-t border-slate-100 pt-5 text-center text-xs leading-5 text-slate-500">
-                ID yoki parolingiz esdan chiqdimi? Maktab administratori bilan bog'laning.
-              </div>
-            </div>
-            <p className="mt-5 text-center text-xs font-medium text-slate-500">© {new Date().getFullYear()} ELITA Maktabi · Barcha huquqlar himoyalangan</p>
-          </section>
         </div>
-      </div>
-    </main>
+      </section>
+
+      {/* Features */}
+      <section className="border-t border-slate-100 bg-slate-50/60 py-16 sm:py-24">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
+          <div className="mx-auto max-w-2xl text-center">
+            <h2 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+              Nega SchoolOS?
+            </h2>
+            <p className="mt-3 text-slate-500">
+              Har bir funksiya real maktab ehtiyojidan chiqqan — ortiqcha murakkablik yo'q.
+            </p>
+          </div>
+          <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {FEATURES.map((f) => (
+              <div
+                key={f.title}
+                className="group rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition-shadow hover:shadow-md"
+              >
+                <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 transition-colors group-hover:bg-indigo-600 group-hover:text-white">
+                  <f.icon className="h-5 w-5" />
+                </span>
+                <h3 className="mt-4 text-base font-semibold text-slate-900">{f.title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-slate-500">{f.text}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* CTA */}
+      <section className="py-16 sm:py-20">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
+          <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-indigo-600 to-violet-700 px-6 py-14 text-center shadow-xl shadow-indigo-600/20 sm:px-12">
+            <h2 className="text-2xl font-bold text-white sm:text-3xl">
+              Maktabingizni bugun sinab ko'ring
+            </h2>
+            <p className="mx-auto mt-3 max-w-xl text-sm leading-relaxed text-indigo-100 sm:text-base">
+              Demo rejimda barcha rollarni ko'rishingiz mumkin: direktor, o'qituvchi, sinf
+              rahbari, ota-ona va o'quvchi.
+            </p>
+            <Link
+              href="/login"
+              className="mt-8 inline-flex h-12 items-center gap-2 rounded-xl bg-white px-8 text-base font-semibold text-indigo-700 shadow-lg transition-transform hover:scale-[1.02]"
+            >
+              Demo hisoblar
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      <footer className="border-t border-slate-100 py-8">
+        <p className="text-center text-xs text-slate-400">
+          SchoolOS — O'zbekiston maktablari uchun boshqaruv platformasi · Demo rejim
+        </p>
+      </footer>
+    </div>
   );
 }
