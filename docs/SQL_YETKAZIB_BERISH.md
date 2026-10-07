@@ -10,7 +10,7 @@
 
 | Fayl | Hajm | Mazmuni |
 |---|---|---|
-| `supabase/migrations/000_reset_dev.sql` | reset | **FAQAT DEV**: eski prototip (DEMO_SETUP.sql) + SchoolOS jadvallarini to'liq tozalaydi (jadvallar, funksiyalar, tiplar, storage bucketlar, demo auth userlar) |
+| `supabase/migrations/000_reset_dev.sql` | reset | **FAQAT DEV**: universal tozalash — `drop schema public cascade` (nom ro'yxatisiz HAMMA jadvall/view/funksiya/tip), storage bucket+fayl+policylar, auth foydalanuvchilar, Supabase standart grantlari tiklanadi |
 | `supabase/migrations/001_schema.sql` | 21 bo'lim | Barcha jadvallar, FK, indekslar, CHECK/UNIQUE constraintlar, triggerlar (updated_at, tarix/snapshot, hisob-kitoblar), expression indekslar (parallel guruh darslari uchun `lessons_slot_uk`), enum tiplar, `pg_trgm` guard, **§0.1 preflight guard** (eski prototip jadvallari bilan konfliktni aniq xato xabari bilan to'xtatadi) |
 | `supabase/migrations/002_rls.sql` | ~30 funksiya | ~30 yordamchi/capability funksiya (`app_school_id`, `app_role`, `app_is_teacher_of_lesson`...), **har bir jadvalga to'liq RLS** (SELECT/INSERT/UPDATE/DELETE, rolga mos), 4 storage bucket + storage.objects RLS, `teachers_public` school-filtrlangan view |
 | `supabase/migrations/003_audit.sql` | 36 jadval | `audit_log` (immutable: update/delete triggerlar orqali bloklangan), `audit_mask_sensitive` (parol/token maskalanadi), 36 jadvalga audit triggeri, audit'ga RLS (faqat admin ko'radi) |
@@ -53,8 +53,8 @@
 
 ## 4. Cheklovlar / keyingi qadamlar
 
-- **Supabase'da sinildi (2026-10-07):** foydalanuvchi loyihasida eski prototip (DEMO_SETUP.sql) jadvallari mavjud bo'lib, 001 xato bergan (`42703: column "school_id" does not exist` — `classes`, `profiles`, `messages`, `notifications`). Yechim: **001'ga preflight guard** (aniq o'zbekcha xato xabari) + **000_reset_dev.sql** (eski prototip va SchoolOS obyektlarini tozalaydi). Lokal reproduksiya: eski prototip bazada 001 → KONFLIKT xatosi → 000_reset → 001-004 → 53/53 test — HAMMASI OTDI.
-- **Supabase'da o'rnatish tartibi:** eski prototip jadvallari bo'lsa — avval `000_reset_dev.sql` (⚠️ faqat dev loyihasida!), so'ngra `001 → 002 → 003` (004 ixtiyoriy, faqat demo). `local_harness.sql` Supabase'da ishlatilmaydi.
+- **Supabase'da sinildi (2026-10-07):** (1) eski prototip jadvallari 001'ni 42703 xatosi bilan to'xtatgan → 001'ga preflight guard qo'shildi; (2) ro'yxatga asoslangan reset ham yetarli bo'lmagan (bazada ro'yxatga kirmagan qoldiqlar) → `000_reset_dev.sql` **universal** qilindi: `drop schema public cascade` + storage/auth tozalash + Supabase standart grantlarini tiklash. Lokal nuke-testi: iflos holat (135 obyekt, funksiyalarga bog'langan storage policylar, eski prototip qoldiqlari, auth userlar) → nuke → hammasi 0 → qayta o'rnatish → 53/53 test OK.
+- **Supabase'da o'rnatish tartibi:** `000_reset_dev.sql` (faqat eski/drift ma'lumot bo'lsa — ⚠️ hamma narsani o'chiradi!) → `001 → 002 → 003` → `004` (ixtiyoriy demo). `local_harness.sql`/`validate_local.py` Supabase'da ishlatilmaydi.
 - `pg_trgm` lokal testda yo'q edi — 001'da guard bor, Supabase'da mavjud.
 - JSHSHIR kolonkasi collect qilinmaydi (D5 — legal tekshiruvgacha).
 - **KEYINGI: Phase 1 (Admin core)** — foydalanuvchi tasdig'idan keyin.

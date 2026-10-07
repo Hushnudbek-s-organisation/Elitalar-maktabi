@@ -1,24 +1,43 @@
-# Supabase setup
+# Supabase setup — SchoolOS Uzbekistan
 
-## Isolated demo / local test only
+## To'liq o'rnatish (yangi yoki tozalanadigan DEV loyiha)
 
-`DEMO_SETUP.sql` creates all tables currently used by the app, indexes, the `transfer_pp` wallet RPC, Storage buckets, Realtime subscriptions, and four example accounts. Run it from the Supabase Dashboard → **SQL Editor** in a **new, empty, isolated project**, then add that project's URL and anon key to the local `.env.local` file and restart Next.js.
+Supabase Dashboard → **SQL Editor**da **shu tartibda** ishga tushiring:
 
-**Do not run this setup against production or use real student data.** The current app still has a legacy browser-only sign-in (`profiles.password` is plain text and roles are stored in localStorage). For the legacy UI to work without Supabase Auth, the demo script intentionally installs permissive anon RLS policies and public demo uploads. This means anyone with the public project URL/key can read and modify demo data. A production release requires Supabase Auth, server-side account provisioning, and user-/role-scoped RLS first.
-
-### Example accounts
-
-| Role | ID | Password |
+| # | Fayl | Nima qiladi |
 |---|---|---|
-| Director | `D-100001` | `DirectorDemo#2026` |
-| Teacher | `T-100001` | `TeacherDemo#2026` |
-| Student | `S-100001` | `StudentOne#2026` |
-| Student | `S-100002` | `StudentTwo#2026` |
+| 1 | `migrations/000_reset_dev.sql` | ⚠️ **FAQAT agar bazada eski/drift ma'lumot bo'lsa.** Butun `public` sxemasini, barcha storage bucket/fayllarini va auth foydalanuvchilarini o'chiradi (nom ro'yxatisiz — hamma narsani). Qaytarib bo'lmaydi! |
+| 2 | `migrations/001_schema.sql` | Barcha jadvallar, indekslar, triggerlar, tarix (temporal) sxemasi |
+| 3 | `migrations/002_rls.sql` | RLS siyosatlari (har rol uchun), capability funksiyalari, storage bucketlar |
+| 4 | `migrations/003_audit.sql` | Immutable audit log + 36 jadvalga audit triggerlari |
+| 5 | `migrations/004_seed_dev.sql` | **Ixtiyoriy** (demo): demo maktab, jadval, jurnal namunalari, test hisoblari |
 
-The two students belong to `7-A`, with sample timetable, homework, contacts, and a group chat seeded for UI testing. Re-running the script resets these four demo profiles to the listed credentials and restores the sample class/schedule.
+**Toza yangi loyihada** 1-qadam (reset) kerak emas — to'g'ridan-to'g'ri 001'dan boshlang.
 
-Never put a Supabase **service-role** key in `.env.local` variables prefixed with `NEXT_PUBLIC_` or in browser code. The app only needs the public anon key for this demo setup.
+**Xatolik bo'lsa:** 001'dagi preflight guard aniq o'zbekcha xato beradi (eski prototip jadvallari bilan konflikt bo'lsa) — u ko'rsatganidek avval `000_reset_dev.sql` ni ishga tushiring.
 
-## Existing migration
+## Demo test hisoblari (004'dan keyin)
 
-`migrations/202610040001_wallet_transfer_rpc.sql` contains the wallet transfer function by itself for projects that already have the matching tables. `DEMO_SETUP.sql` also creates that function, so a fresh demo install does not need the separate migration. Supabase must actually execute one of these SQL files; a migration file in Git is not automatically applied to the hosted database.
+| Rol | Email | Parol |
+|---|---|---|
+| Direktor | `director@demo.school.uz` | `DirectorDemo#2026` |
+| Admin | `admin@demo.school.uz` | `AdminDemo#2026` |
+| O'qituvchi (10-A rahbari) | `hakimov@demo.school.uz` | `TeacherDemo#2026` |
+| Ota-ona (2 farzand) | `parent1@demo.school.uz` | `ParentDemo#2026` |
+| O'quvchi | `student1@demo.school.uz` | `StudentDemo#2026` |
+
+Barcha o'qituvchilar: `TeacherDemo#2026`. Bu hisoblar FAQAT dev uchun (`is_demo=true` maktab).
+
+## Lokal validatsiya (Supabasesiz)
+
+```bash
+pip install --break-system-packages pgserver
+python3 supabase/tests/validate_local.py
+```
+
+Natija: migrationlar toza bazada OK + **53/53 RLS smoke test** + idempotensiya tekshiruvi.
+
+## ESKI (legacy) fayllar — FAQAT TARIX UCHUN
+
+- `DEMO_SETUP.sql` — eski prototip bootstrap'i (plain-text parollar, anon'ga ochiq RLS). **Yangi o'rnatishda ISHLATMANG**; bazada qolgan bo'lsa `000_reset_dev.sql` bilan tozalanadi.
+- `migrations/202610040001_wallet_transfer_rpc.sql` — eski prototipning wallet funksiyasi (D7: wallet OFF flag bilan, yangi sxemada yo'q).
