@@ -25,6 +25,68 @@ exception when others then
 end $$;
 
 -- ---------------------------------------------------------------------------
+-- 0.1 PREFLIGHT GUARD: eski prototip jadvallari bilan konflikt tekshiruvi.
+--     Agar public sxemasida BIZNING jadval nomlaridan biri mavjud bo'lsa,
+--     lekin unda school_id ustuni bo'lmasa — bu eski prototip (DEMO_SETUP.sql)
+--     jadvali: create table if not exists uni aylanib o'tadi va keyingi
+--     indeks/policy 42703 ("column school_id does not exist") xatosini beradi.
+--     Buning o'rniga ANIQ xato xabari ko'rsatamiz.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  -- school_id ustuni BO'LISHI KERAK bo'lgan jadvallar (bizning sxema)
+  v_expected text[] := array[
+    'school_settings','school_features','academic_years','academic_terms','lesson_periods',
+    'profiles','user_permission_overrides','user_sessions','rooms','classes','subjects',
+    'grading_scales','grade_types','class_subjects','subject_groups','calendar_events',
+    'students','student_enrollments','parents','parent_student','teachers',
+    'teacher_assignments','teacher_availability','teacher_absences','substitute_assignments',
+    'class_teacher_assignments','group_students','timetable_versions','timetable_slots',
+    'timetable_exceptions','lessons','attendance','grades','homework','homework_targets',
+    'homework_submissions','message_templates','messages','message_recipients',
+    'announcements','announcement_recipients','notifications','notification_preferences',
+    'notification_deliveries','push_subscriptions','telegram_accounts','risk_rules',
+    'risk_events','data_quality_issues','daily_summaries','document_templates','documents',
+    'import_jobs','import_errors','export_jobs',
+    'student_enrollments_history','parent_student_history','teacher_assignments_history',
+    'class_teacher_assignments_history','group_students_history','parent_contact_history',
+    'audit_log'
+  ];
+  -- eski prototip jadvallari (nomi biznikiga to'g'ri kelmaydi, lekin xavfsizlik
+  -- muammosi: demo_open_access — anon to'liq kirish)
+  v_legacy text[] := array['timetable','homeworks','feedbacks','contacts','chats','transactions'];
+  v_conflicts text;
+  v_leftovers text;
+begin
+  select string_agg(x, ', ' order by x) into v_conflicts
+  from unnest(v_expected) as x
+  where exists (select 1 from information_schema.tables it
+                where it.table_schema = 'public' and it.table_name = x
+                  and it.table_type = 'BASE TABLE')
+    and not exists (select 1 from information_schema.columns c
+                    where c.table_schema = 'public' and c.table_name = x
+                      and c.column_name = 'school_id');
+
+  if v_conflicts is not null then
+    raise exception using
+      message = 'KONFLIKT: quyidagi jadvallar mavjud, lekin school_id ustunisiz: ' || v_conflicts,
+      hint = 'Bular eski prototip (DEMO_SETUP.sql) jadvallari — yangi sxema bilan mos emas. '
+             'Dev loyihasida avval supabase/migrations/000_reset_dev.sql ni ishga tushiring, '
+             'keyin 001_schema.sql dan qayta boshlang (yoki butunlay yangi Supabase loyihasida davom eting).';
+  end if;
+
+  select string_agg(x, ', ' order by x) into v_leftovers
+  from unnest(v_legacy) as x
+  where exists (select 1 from information_schema.tables it
+                where it.table_schema = 'public' and it.table_name = x
+                  and it.table_type = 'BASE TABLE');
+
+  if v_leftovers is not null then
+    raise warning 'Eski prototip jadvallari qolmoqda: % — ularda anon uchun ochiq (demo_open_access) siyosatlar bo''lishi mumkin. 000_reset_dev.sql ni ishlatish tavsiya etiladi.', v_leftovers;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------------
 -- 1. Enums (tizim-fixed qiymatlar; maktab sozlaydigan qiymatlar — lookup
 --    jadvallar: grading_scales, grade_types, subjects, ...)
 -- ---------------------------------------------------------------------------

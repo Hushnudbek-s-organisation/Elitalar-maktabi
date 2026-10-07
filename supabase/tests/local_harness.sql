@@ -72,6 +72,8 @@ create table if not exists storage.buckets (
   id text primary key,
   name text not null,
   public boolean not null default false,
+  file_size_limit bigint,
+  allowed_mime_types jsonb,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
